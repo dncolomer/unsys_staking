@@ -109,14 +109,14 @@ pub struct AdminTransferCancelled {
 }
 
 #[event]
-pub struct LegacyDividendsEnabled {
-    pub user: Pubkey,
-    pub shares: u128,
+pub struct LegacyHolderRegistered {
+    pub holder: Pubkey,
 }
 
 #[event]
-pub struct LegacyPartnershipEnabled {
+pub struct LegacyBenefitsEnabled {
     pub user: Pubkey,
+    pub shares: u128,
     pub tier: u8,
 }
 
@@ -467,47 +467,76 @@ pub mod unsys_staking {
     // Legacy migration
     // ----------------------------------------------------------------
 
-    pub fn enable_legacy_dividends(ctx: Context<EnableLegacyDividends>) -> Result<()> {
+    /// Admin registers a past OMEGA holder by their wallet public key.
+    /// The holder doesn't need to sign — admin registers them unilaterally.
+    /// Once registered, the holder can call `enable_legacy_benefits` to activate.
+    pub fn register_legacy_holder(ctx: Context<RegisterLegacyHolder>, holder: Pubkey) -> Result<()> {
+        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
+        require!(holder != Pubkey::default(), ErrorCode::InvalidAdmin);
+
+        let legacy = &mut ctx.accounts.legacy_omega_stake;
+        legacy.owner = holder;
+        legacy.registered = true;
+        legacy.bump = ctx.bumps.legacy_omega_stake;
+
+        emit!(LegacyHolderRegistered { holder });
+        msg!("Legacy OMEGA holder registered: {}", holder);
+        Ok(())
+    }
+
+    /// User activates both legacy benefits in a single transaction:
+    /// - 10B dividend shares (passive income, no tokens locked)
+    /// - Tier-2 partnership (referral share claims)
+    /// Requires a registered LegacyOmegaStake PDA.
+    pub fn enable_legacy_benefits(ctx: Context<EnableLegacyBenefits>) -> Result<()> {
         require!(ctx.accounts.legacy_omega_stake.registered, ErrorCode::NotLegacyOmega);
-        let stake = &mut ctx.accounts.dividend_stake;
-        require!(stake.amount == 0 && stake.shares == 0, ErrorCode::StakeAlreadyExists);
 
         let clock = Clock::get()?;
-        stake.owner = ctx.accounts.user.key();
-        stake.amount = 0;
-        stake.shares = BASE_LEGACY_SHARES;
-        stake.lock_end = 0;
-        stake.multiplier_bps = 10000;
-        stake.last_claim_ts = clock.unix_timestamp;
-        stake.last_claim_epoch = ctx.accounts.global_config.dividend_epoch;
-        stake.bump = ctx.bumps.dividend_stake;
+        let current_epoch = ctx.accounts.global_config.dividend_epoch;
 
-        ctx.accounts.global_config.total_dividend_shares = ctx.accounts.global_config.total_dividend_shares.checked_add(BASE_LEGACY_SHARES).unwrap();
+        // Set up dividend stake
+        let div_stake = &mut ctx.accounts.dividend_stake;
+        require!(div_stake.amount == 0 && div_stake.shares == 0, ErrorCode::StakeAlreadyExists);
 
-        emit!(LegacyDividendsEnabled { user: ctx.accounts.user.key(), shares: BASE_LEGACY_SHARES });
-        msg!("Legacy Omega now earns passive dividends");
+        div_stake.owner = ctx.accounts.user.key();
+        div_stake.amount = 0;
+        div_stake.shares = BASE_LEGACY_SHARES;
+        div_stake.lock_end = 0;
+        div_stake.multiplier_bps = 10000;
+        div_stake.last_claim_ts = clock.unix_timestamp;
+        div_stake.last_claim_epoch = current_epoch;
+        div_stake.bump = ctx.bumps.dividend_stake;
+
+        ctx.accounts.global_config.total_dividend_shares = ctx
+            .accounts.global_config.total_dividend_shares
+            .checked_add(BASE_LEGACY_SHARES).unwrap();
+
+        // Set up partnership stake
+        let partner_stake = &mut ctx.accounts.partnership_stake;
+        require!(partner_stake.staked_amount == 0 && partner_stake.tier == 0, ErrorCode::StakeAlreadyExists);
+
+        partner_stake.owner = ctx.accounts.user.key();
+        partner_stake.staked_amount = 0;
+        partner_stake.referrer = None;
+        partner_stake.tier = 2;
+        partner_stake.last_claim_epoch = current_epoch;
+        partner_stake.bump = ctx.bumps.partnership_stake;
+
+        ctx.accounts.global_config.total_active_partners = ctx
+            .accounts.global_config.total_active_partners
+            .checked_add(1).unwrap();
+
+        emit!(LegacyBenefitsEnabled {
+            user: ctx.accounts.user.key(),
+            shares: BASE_LEGACY_SHARES,
+            tier: 2,
+        });
+        msg!("Legacy OMEGA benefits enabled: 10B shares + tier-2 partnership");
         Ok(())
     }
 
-    pub fn enable_legacy_partnership(ctx: Context<EnableLegacyPartnership>) -> Result<()> {
-        require!(ctx.accounts.legacy_omega_stake.registered, ErrorCode::NotLegacyOmega);
-        let stake = &mut ctx.accounts.partnership_stake;
-        require!(stake.staked_amount == 0 && stake.tier == 0, ErrorCode::StakeAlreadyExists);
-
-        stake.owner = ctx.accounts.user.key();
-        stake.staked_amount = 0;
-        stake.referrer = None;
-        stake.tier = 2;
-        stake.last_claim_epoch = ctx.accounts.global_config.dividend_epoch;
-        stake.bump = ctx.bumps.partnership_stake;
-
-        ctx.accounts.global_config.total_active_partners = ctx.accounts.global_config.total_active_partners.checked_add(1).unwrap();
-
-        emit!(LegacyPartnershipEnabled { user: ctx.accounts.user.key(), tier: 2 });
-        msg!("Legacy Omega now has 30% referral tier");
-        Ok(())
-    }
-
+    /// Admin revokes tier-2 partnership status. Registration stays permanent —
+    /// the user can re-enable via enable_legacy_benefits if not already staked.
     pub fn revoke_legacy_partnership(ctx: Context<RevokeLegacyPartnership>) -> Result<()> {
         require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
 
@@ -516,7 +545,9 @@ pub mod unsys_staking {
 
         stake.tier = 0;
 
-        ctx.accounts.global_config.total_active_partners = ctx.accounts.global_config.total_active_partners.saturating_sub(1);
+        ctx.accounts.global_config.total_active_partners = ctx
+            .accounts.global_config.total_active_partners
+            .saturating_sub(1);
 
         emit!(LegacyPartnershipRevoked { user: stake.owner });
         msg!("Legacy partnership revoked for {}", stake.owner);
@@ -759,24 +790,42 @@ pub struct UnstakeDividends<'info> {
 }
 
 #[derive(Accounts)]
-pub struct EnableLegacyDividends<'info> {
-    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
+pub struct RegisterLegacyHolder<'info> {
+    #[account(seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
-    #[account(init_if_needed, payer = user, space = 8 + 200, seeds = [b"dividend_stake", user.key().as_ref()], bump)]
-    pub dividend_stake: Account<'info, DividendStake>,
-    pub legacy_omega_stake: Account<'info, LegacyOmegaStake>,
     #[account(mut)]
-    pub user: Signer<'info>,
+    pub admin: Signer<'info>,
+    /// PDA created for the holder. Seeds use the holder's pubkey (passed as arg),
+    /// not the admin's. The holder can later call enable_legacy_benefits.
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + 66,
+        seeds = [b"legacy_omega", holder.key().as_ref()],
+        bump
+    )]
+    pub legacy_omega_stake: Account<'info, LegacyOmegaStake>,
+    /// CHECK: The holder's wallet public key. Does not need to sign.
+    /// Used only for PDA seed derivation.
+    pub holder: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-pub struct EnableLegacyPartnership<'info> {
+pub struct EnableLegacyBenefits<'info> {
     #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
+    #[account(
+        seeds = [b"legacy_omega", user.key().as_ref()],
+        bump = legacy_omega_stake.bump,
+        constraint = legacy_omega_stake.registered @ ErrorCode::NotLegacyOmega,
+        constraint = legacy_omega_stake.owner == user.key() @ ErrorCode::Unauthorized,
+    )]
+    pub legacy_omega_stake: Account<'info, LegacyOmegaStake>,
+    #[account(init_if_needed, payer = user, space = 8 + 200, seeds = [b"dividend_stake", user.key().as_ref()], bump)]
+    pub dividend_stake: Account<'info, DividendStake>,
     #[account(init_if_needed, payer = user, space = 8 + 150, seeds = [b"partnership_stake", user.key().as_ref()], bump)]
     pub partnership_stake: Account<'info, PartnershipStake>,
-    pub legacy_omega_stake: Account<'info, LegacyOmegaStake>,
     #[account(mut)]
     pub user: Signer<'info>,
     pub system_program: Program<'info, System>,

@@ -360,63 +360,71 @@ export type UnsysStaking = {
       "args": []
     },
     {
-      "name": "enableLegacyDividends",
+      "name": "registerLegacyHolder",
       "discriminator": [
-        7,
-        179,
-        209,
-        21,
-        177,
+        163,
+        206,
+        249,
+        52,
         34,
-        200,
-        10
+        119,
+        33,
+        78
+      ],
+      "accounts": [
+        {
+          "name": "globalConfig"
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "legacyOmegaStake",
+          "writable": true
+        },
+        {
+          "name": "holder"
+        },
+        {
+          "name": "systemProgram"
+        }
+      ],
+      "args": [
+        {
+          "name": "holder",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "enableLegacyBenefits",
+      "discriminator": [
+        216,
+        89,
+        185,
+        246,
+        230,
+        166,
+        218,
+        121
       ],
       "accounts": [
         {
           "name": "globalConfig",
           "writable": true
+        },
+        {
+          "name": "legacyOmegaStake"
         },
         {
           "name": "dividendStake",
           "writable": true
         },
         {
-          "name": "legacyOmegaStake"
-        },
-        {
-          "name": "user",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "systemProgram"
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "enableLegacyPartnership",
-      "discriminator": [
-        103,
-        67,
-        131,
-        165,
-        119,
-        25,
-        195,
-        187
-      ],
-      "accounts": [
-        {
-          "name": "globalConfig",
-          "writable": true
-        },
-        {
           "name": "partnershipStake",
           "writable": true
-        },
-        {
-          "name": "legacyOmegaStake"
         },
         {
           "name": "user",

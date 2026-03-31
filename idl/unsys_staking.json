@@ -354,63 +354,71 @@
       "args": []
     },
     {
-      "name": "enable_legacy_dividends",
+      "name": "register_legacy_holder",
       "discriminator": [
-        7,
-        179,
-        209,
-        21,
-        177,
+        163,
+        206,
+        249,
+        52,
         34,
-        200,
-        10
+        119,
+        33,
+        78
+      ],
+      "accounts": [
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "legacy_omega_stake",
+          "writable": true
+        },
+        {
+          "name": "holder"
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "holder",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "enable_legacy_benefits",
+      "discriminator": [
+        216,
+        89,
+        185,
+        246,
+        230,
+        166,
+        218,
+        121
       ],
       "accounts": [
         {
           "name": "global_config",
           "writable": true
+        },
+        {
+          "name": "legacy_omega_stake"
         },
         {
           "name": "dividend_stake",
           "writable": true
         },
         {
-          "name": "legacy_omega_stake"
-        },
-        {
-          "name": "user",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "system_program"
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "enable_legacy_partnership",
-      "discriminator": [
-        103,
-        67,
-        131,
-        165,
-        119,
-        25,
-        195,
-        187
-      ],
-      "accounts": [
-        {
-          "name": "global_config",
-          "writable": true
-        },
-        {
           "name": "partnership_stake",
           "writable": true
-        },
-        {
-          "name": "legacy_omega_stake"
         },
         {
           "name": "user",

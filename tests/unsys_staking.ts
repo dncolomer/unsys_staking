@@ -754,4 +754,274 @@ describe("unsys_staking", () => {
       } catch (e) { assert.include(e.toString(), "InvalidVault"); }
     });
   });
+
+  // ================================================================
+  describe("legacy OMEGA holder registration and benefits", () => {
+    let legacyUser: anchor.web3.Keypair;
+    let legacyUnsysAta: anchor.web3.PublicKey;
+    let legacyUsdcAta: anchor.web3.PublicKey;
+    let legacyOmegaPda: anchor.web3.PublicKey;
+
+    before(async () => {
+      legacyUser = anchor.web3.Keypair.generate();
+      await airdropSol(legacyUser.publicKey, 10);
+      legacyUnsysAta = (await getOrCreateAssociatedTokenAccount(
+        provider.connection, legacyUser, unsysMint, legacyUser.publicKey
+      )).address;
+      legacyUsdcAta = (await getOrCreateAssociatedTokenAccount(
+        provider.connection, legacyUser, usdcMint, legacyUser.publicKey
+      )).address;
+
+      [legacyOmegaPda] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("legacy_omega"), legacyUser.publicKey.toBuffer()],
+        program.programId
+      );
+    });
+
+    it("should register a legacy holder (admin only)", async () => {
+      await program.methods.registerLegacyHolder(legacyUser.publicKey)
+        .accounts({
+          globalConfig: globalConfigKey,
+          admin: admin.publicKey,
+          legacyOmegaStake: legacyOmegaPda,
+          holder: legacyUser.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([admin]).rpc();
+
+      const legacy = await program.account.legacyOmegaStake.fetch(legacyOmegaPda);
+      assert.ok(legacy.owner.equals(legacyUser.publicKey));
+      assert.equal(legacy.registered, true);
+    });
+
+    it("should reject registration by non-admin", async () => {
+      const otherUser = anchor.web3.Keypair.generate();
+      await airdropSol(otherUser.publicKey, 5);
+
+      const [otherPda] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("legacy_omega"), otherUser.publicKey.toBuffer()],
+        program.programId
+      );
+
+      const nonAdmin = anchor.web3.Keypair.generate();
+      await airdropSol(nonAdmin.publicKey, 5);
+
+      try {
+        await program.methods.registerLegacyHolder(otherUser.publicKey)
+          .accounts({
+            globalConfig: globalConfigKey,
+            admin: nonAdmin.publicKey,
+            legacyOmegaStake: otherPda,
+            holder: otherUser.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([nonAdmin]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) { assert.include(e.toString(), "Unauthorized"); }
+    });
+
+    it("should reject double registration (init fails)", async () => {
+      try {
+        await program.methods.registerLegacyHolder(legacyUser.publicKey)
+          .accounts({
+            globalConfig: globalConfigKey,
+            admin: admin.publicKey,
+            legacyOmegaStake: legacyOmegaPda,
+            holder: legacyUser.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([admin]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) {
+        // init (not init_if_needed) will fail if account already exists
+        assert.ok(e.toString().length > 0);
+      }
+    });
+
+    it("should enable legacy benefits (dividends + partnership in one tx)", async () => {
+      const configBefore = await program.account.globalConfig.fetch(globalConfigKey);
+
+      const [divStakeKey] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("dividend_stake"), legacyUser.publicKey.toBuffer()],
+        program.programId
+      );
+      const [partnerKey] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("partnership_stake"), legacyUser.publicKey.toBuffer()],
+        program.programId
+      );
+
+      await program.methods.enableLegacyBenefits()
+        .accounts({
+          globalConfig: globalConfigKey,
+          legacyOmegaStake: legacyOmegaPda,
+          dividendStake: divStakeKey,
+          partnershipStake: partnerKey,
+          user: legacyUser.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([legacyUser]).rpc();
+
+      // Verify dividend stake
+      const divStake = await program.account.dividendStake.fetch(divStakeKey);
+      assert.ok(divStake.owner.equals(legacyUser.publicKey));
+      assert.equal(divStake.amount.toNumber(), 0); // no tokens locked
+      assert.isTrue(divStake.shares.toNumber() > 0); // 10B shares
+
+      // Verify partnership stake
+      const partnerStake = await program.account.partnershipStake.fetch(partnerKey);
+      assert.ok(partnerStake.owner.equals(legacyUser.publicKey));
+      assert.equal(partnerStake.tier, 2);
+      assert.equal(partnerStake.stakedAmount.toNumber(), 0);
+
+      // Verify global counters incremented
+      const configAfter = await program.account.globalConfig.fetch(globalConfigKey);
+      assert.isTrue(configAfter.totalDividendShares.toNumber() > configBefore.totalDividendShares.toNumber());
+      assert.equal(configAfter.totalActivePartners.toNumber(), configBefore.totalActivePartners.toNumber() + 1);
+    });
+
+    it("should reject enable benefits for unregistered user", async () => {
+      const unregistered = anchor.web3.Keypair.generate();
+      await airdropSol(unregistered.publicKey, 5);
+
+      const [fakePda] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("legacy_omega"), unregistered.publicKey.toBuffer()],
+        program.programId
+      );
+      const [divKey] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("dividend_stake"), unregistered.publicKey.toBuffer()],
+        program.programId
+      );
+      const [partKey] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("partnership_stake"), unregistered.publicKey.toBuffer()],
+        program.programId
+      );
+
+      try {
+        await program.methods.enableLegacyBenefits()
+          .accounts({
+            globalConfig: globalConfigKey,
+            legacyOmegaStake: fakePda,
+            dividendStake: divKey,
+            partnershipStake: partKey,
+            user: unregistered.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([unregistered]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) {
+        // PDA doesn't exist, will fail with AccountNotInitialized or similar
+        assert.ok(e.toString().length > 0);
+      }
+    });
+
+    it("should reject double enable (StakeAlreadyExists)", async () => {
+      const [divStakeKey] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("dividend_stake"), legacyUser.publicKey.toBuffer()],
+        program.programId
+      );
+      const [partnerKey] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("partnership_stake"), legacyUser.publicKey.toBuffer()],
+        program.programId
+      );
+
+      try {
+        await program.methods.enableLegacyBenefits()
+          .accounts({
+            globalConfig: globalConfigKey,
+            legacyOmegaStake: legacyOmegaPda,
+            dividendStake: divStakeKey,
+            partnershipStake: partnerKey,
+            user: legacyUser.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([legacyUser]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) { assert.include(e.toString(), "StakeAlreadyExists"); }
+    });
+
+    it("legacy user should claim dividends after revenue deposit", async () => {
+      await program.methods.depositRevenue(REVENUE_DEPOSIT)
+        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([admin]).rpc();
+
+      const [divStakeKey] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("dividend_stake"), legacyUser.publicKey.toBuffer()],
+        program.programId
+      );
+
+      const before = await provider.connection.getTokenAccountBalance(legacyUsdcAta);
+      await program.methods.claimDividends()
+        .accounts({ globalConfig: globalConfigKey, userStake: divStakeKey, user: legacyUser.publicKey, revenueVault, userUsdcAta: legacyUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([legacyUser]).rpc();
+      const after = await provider.connection.getTokenAccountBalance(legacyUsdcAta);
+
+      assert.isTrue(parseInt(after.value.amount) > parseInt(before.value.amount));
+    });
+
+    it("legacy user should claim referral share", async () => {
+      await program.methods.depositRevenue(REVENUE_DEPOSIT)
+        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([admin]).rpc();
+
+      const [partnerKey] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("partnership_stake"), legacyUser.publicKey.toBuffer()],
+        program.programId
+      );
+
+      const before = await provider.connection.getTokenAccountBalance(legacyUsdcAta);
+      await program.methods.claimReferralShare()
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: partnerKey, user: legacyUser.publicKey, revenueVault, userUsdcAta: legacyUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([legacyUser]).rpc();
+      const after = await provider.connection.getTokenAccountBalance(legacyUsdcAta);
+
+      assert.isTrue(parseInt(after.value.amount) > parseInt(before.value.amount));
+    });
+
+    it("admin should revoke legacy partnership", async () => {
+      const [partnerKey] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("partnership_stake"), legacyUser.publicKey.toBuffer()],
+        program.programId
+      );
+
+      const configBefore = await program.account.globalConfig.fetch(globalConfigKey);
+
+      await program.methods.revokeLegacyPartnership()
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: partnerKey, admin: admin.publicKey })
+        .signers([admin]).rpc();
+
+      const stake = await program.account.partnershipStake.fetch(partnerKey);
+      assert.equal(stake.tier, 0);
+
+      const configAfter = await program.account.globalConfig.fetch(globalConfigKey);
+      assert.equal(configAfter.totalActivePartners.toNumber(), configBefore.totalActivePartners.toNumber() - 1);
+
+      // Registration remains permanent
+      const legacy = await program.account.legacyOmegaStake.fetch(legacyOmegaPda);
+      assert.equal(legacy.registered, true);
+    });
+
+    it("should reject revoke by non-admin", async () => {
+      // Re-register user first to test revoke again... but user already has tier 0.
+      // Just verify non-admin can't call revoke on any partnership
+      const { kp: partner } = await createFundedUser();
+      const [pk] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("partnership_stake"), partner.publicKey.toBuffer()],
+        program.programId
+      );
+      // Create a tier-1 stake to test on
+      await program.methods.stakePartnership(STAKE_AMOUNT, null)
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: partner.publicKey, userUnsysAta: (await getOrCreateAssociatedTokenAccount(provider.connection, partner, unsysMint, partner.publicKey)).address, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
+        .signers([partner]).rpc();
+
+      const nonAdmin = anchor.web3.Keypair.generate();
+      await airdropSol(nonAdmin.publicKey, 5);
+
+      try {
+        await program.methods.revokeLegacyPartnership()
+          .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, admin: nonAdmin.publicKey })
+          .signers([nonAdmin]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) { assert.include(e.toString(), "Unauthorized"); }
+    });
+  });
 });

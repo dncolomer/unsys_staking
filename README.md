@@ -30,7 +30,7 @@ Revenue deposits are split into two pools via a snapshot mechanism:
 
 Each deposit increments a `dividend_epoch` counter. Pools **accumulate** across deposits -- unclaimed funds from prior epochs roll forward into the next snapshot. Users can only claim once per epoch, and the snapshot-based calculation ensures all users with equal shares receive identical rewards regardless of claim ordering.
 
-## Instructions (19 total)
+## Instructions (18 total)
 
 ### Admin / Setup
 
@@ -68,13 +68,15 @@ Each deposit increments a `dividend_epoch` counter. Pools **accumulate** across 
 | `deactivate_data_provider` | Admin deactivates provider. Required before unstaking. |
 | `unstake_data_provider` | Returns staked UNSYS. Must be deactivated first. Owner-only. |
 
-### Legacy Migration
+### Legacy OMEGA Migration
+
+Past OMEGA token holders can be registered by the admin and then activate both dividend and partnership benefits in a single transaction, without staking any tokens.
 
 | Instruction | Description |
 |---|---|
-| `enable_legacy_dividends` | Grants 10B dividend shares to verified legacy OMEGA holders. Sets epoch tracking. |
-| `enable_legacy_partnership` | Grants tier-2 partnership to legacy OMEGA holders. Guards against double-registration. Sets epoch tracking. |
-| `revoke_legacy_partnership` | Admin revokes a tier-2 legacy partnership. Decrements active partner count. |
+| `register_legacy_holder` | Admin registers a past OMEGA holder by wallet public key. Creates a `LegacyOmegaStake` PDA. Holder doesn't need to sign. Registration is permanent. |
+| `enable_legacy_benefits` | Registered holder activates both benefits in one tx: 10B dividend shares + tier-2 partnership. PDA-verified. |
+| `revoke_legacy_partnership` | Admin revokes tier-2 partnership status. Registration stays permanent — holder can re-enable if not already staked. |
 
 ## Security Features
 
@@ -104,7 +106,7 @@ Each deposit increments a `dividend_epoch` counter. Pools **accumulate** across 
 
 ## Test Coverage
 
-**47 tests, all passing.**
+**57 tests, all passing.**
 
 | Category | Tests | What's Covered |
 |---|---|---|
@@ -121,6 +123,7 @@ Each deposit increments a `dividend_epoch` counter. Pools **accumulate** across 
 | `claim_dividends` | 5 | Exact snapshot math + pool decrement verification, double-claim, new-epoch, wrong vault, non-owner |
 | `multi-user fairness` | 1 | Two equal-share users receive **identical** rewards regardless of claim order (snapshot proof) |
 | `claim_referral_share` | 4 | Exact per-partner split from snapshot + pool decrement, double-claim, non-owner, wrong vault |
+| `legacy_registration` | 10 | Admin register holder, non-admin rejection, double-registration, enable benefits (both in 1 tx), unregistered rejection, double-enable, legacy dividend claim, legacy referral claim, admin revoke, non-admin revoke rejection |
 
 ## Build & Test
 
@@ -187,7 +190,7 @@ unsys_staking/
 │       └── src/
 │           └── lib.rs        # Program source (~1200 lines)
 ├── tests/
-│   └── unsys_staking.ts     # Integration tests (47 tests)
+│   └── unsys_staking.ts     # Integration tests (57 tests)
 └── migrations/
     └── deploy.ts
 ```
