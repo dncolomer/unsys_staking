@@ -287,7 +287,8 @@
       ],
       "accounts": [
         {
-          "name": "global_config"
+          "name": "global_config",
+          "writable": true
         },
         {
           "name": "user_stake",
@@ -326,7 +327,8 @@
       ],
       "accounts": [
         {
-          "name": "global_config"
+          "name": "global_config",
+          "writable": true
         },
         {
           "name": "partnership_stake",
@@ -417,6 +419,35 @@
         },
         {
           "name": "system_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "revoke_legacy_partnership",
+      "discriminator": [
+        111,
+        11,
+        67,
+        2,
+        246,
+        107,
+        114,
+        230
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "partnership_stake",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
         }
       ],
       "args": []
@@ -803,6 +834,10 @@
     {
       "code": 6017,
       "name": "InvalidAdmin"
+    },
+    {
+      "code": 6018,
+      "name": "NotLegacyPartner"
     }
   ],
   "types": [
@@ -861,6 +896,18 @@
           },
           {
             "name": "total_active_partners",
+            "type": "u64"
+          },
+          {
+            "name": "epoch_active_partners",
+            "type": "u64"
+          },
+          {
+            "name": "epoch_dividend_snapshot",
+            "type": "u64"
+          },
+          {
+            "name": "epoch_referral_snapshot",
             "type": "u64"
           },
           {

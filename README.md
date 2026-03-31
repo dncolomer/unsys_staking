@@ -30,7 +30,7 @@ Revenue deposits are split into two pools via a snapshot mechanism:
 
 Each deposit increments a `dividend_epoch` counter. Pools **accumulate** across deposits -- unclaimed funds from prior epochs roll forward into the next snapshot. Users can only claim once per epoch, and the snapshot-based calculation ensures all users with equal shares receive identical rewards regardless of claim ordering.
 
-## Instructions (18 total)
+## Instructions (19 total)
 
 ### Admin / Setup
 
@@ -74,16 +74,19 @@ Each deposit increments a `dividend_epoch` counter. Pools **accumulate** across 
 |---|---|
 | `enable_legacy_dividends` | Grants 10B dividend shares to verified legacy OMEGA holders. Sets epoch tracking. |
 | `enable_legacy_partnership` | Grants tier-2 partnership to legacy OMEGA holders. Guards against double-registration. Sets epoch tracking. |
+| `revoke_legacy_partnership` | Admin revokes a tier-2 legacy partnership. Decrements active partner count. |
 
 ## Security Features
 
 - **Snapshot-based claims**: Revenue is snapshotted into `epoch_dividend_pool` and `epoch_referral_pool` at deposit time. Claims calculate from the snapshot, not the live vault balance, eliminating early-claimer advantage. Verified by multi-user fairness test.
+- **Snapshot + pool decrement**: Each deposit snapshots the pools (`epoch_dividend_snapshot`, `epoch_referral_snapshot`) for fair per-user calculation. Claims decrement the live pool (`epoch_dividend_pool`, `epoch_referral_pool`) to keep on-chain accounting in sync with the vault. Equal-share users always receive identical rewards.
 - **Accumulating pools**: Unclaimed funds from prior epochs roll forward (`+=`) into the next snapshot, preventing loss from rapid deposits.
+- **Snapshotted partner count**: `epoch_active_partners` is captured at deposit time, preventing mid-epoch partner dilution.
 - **Epoch-based claim tracking**: One claim per epoch per user/partner. Prevents vault drain attacks.
 - **Per-partner referral split**: Referral pool divided by `total_active_partners` count, not a flat 1/3 of vault. Integer division dust remains in vault (standard on-chain behavior).
 - **Two-step admin transfer**: `propose_admin_transfer` + `accept_admin_transfer` + `cancel_admin_transfer` for safe admin rotation.
 - **Vault mint and authority validation**: `initialize` verifies `token_vault.mint == unsys_mint`, `revenue_vault.mint == usdc_mint`, and both vaults are owned by the GlobalConfig PDA.
-- **Claim ATA mint validation**: `claim_dividends` and `claim_referral_share` verify `user_usdc_ata.mint == usdc_mint` in addition to ownership check.
+- **Full ATA mint validation**: All claim ATAs verify `mint == usdc_mint`, all staking ATAs verify `mint == unsys_mint`, admin deposit ATA verifies `mint == usdc_mint`. Defense-in-depth alongside CPI checks.
 - **Early exit on zero shares**: `claim_dividends` rejects with `NoActiveStake` if `shares == 0` (e.g. after unstake), avoiding wasted compute.
 - **Checked arithmetic**: All `total_dividend_shares`, `epoch_dividend_pool`, `epoch_referral_pool`, and `dividend_epoch` operations use `checked_add`/`checked_div`/`checked_sub`/`checked_mul`.
 - **PDA-verified GlobalConfig**: Every instruction verifies GlobalConfig via seeds + bump.
@@ -101,23 +104,23 @@ Each deposit increments a `dividend_epoch` counter. Pools **accumulate** across 
 
 ## Test Coverage
 
-**48 tests, all passing.**
+**47 tests, all passing.**
 
 | Category | Tests | What's Covered |
 |---|---|---|
-| `initialize` | 3 | Successful init with vault mint/authority validation, re-initialization rejection, vault mint note |
-| `admin_transfer` | 5 | Propose+accept flow, non-admin rejection, wrong-address rejection, cancel transfer, cancel by non-admin |
+| `initialize` | 2 | Successful init with vault mint/authority validation, re-initialization rejection |
+| `admin_transfer` | 5 | Propose+accept, non-admin rejection, wrong-address rejection, cancel transfer, cancel by non-admin |
 | `stake_dividends` | 7 | 3/6/12-month multipliers, invalid period, double-stake, wrong vault, zero amount |
-| `unstake_dividends` | 1 | Lock period enforcement |
-| `stake_partnership` | 4 | Stake + active partner count increment, referrer, double-stake, zero amount |
-| `unstake_partnership` | 4 | Partial + token return, full + tier revocation + partner decrement, zero-amount rejection, non-owner |
-| `re-stake partnership` | 1 | Full unstake -> re-stake with correct epoch tracking and tier restoration |
-| `stake_data_provider` | 4 | Insufficient stake, successful 5M+, double-stake, admin/non-admin validation |
-| `data_provider_deactivation` | 4 | Active provider unstake rejection, deactivate+unstake flow, inactive deactivation rejection, non-owner |
-| `deposit_revenue` | 6 | Snapshot pool math, accumulation across multiple deposits, non-admin, wrong vault, zero amount |
-| `claim_dividends` | 5 | Exact proportional math from snapshot, double-claim rejection, new-epoch claim, wrong vault, non-owner |
-| `multi-user fairness` | 1 | Two users with equal shares receive **identical** amounts regardless of claim order (snapshot proof) |
-| `claim_referral_share` | 4 | Exact per-partner split from snapshot, double-claim rejection, non-owner, wrong vault |
+| `unstake_dividends` | 1 | Lock period enforcement (happy path requires clock warp -- devnet only) |
+| `stake_partnership` | 4 | Stake + partner count increment, referrer, double-stake, zero amount |
+| `unstake_partnership` | 4 | Partial + token return, full + tier revocation + partner decrement, zero-amount, non-owner |
+| `re-stake partnership` | 1 | Full unstake -> re-stake with correct epoch tracking |
+| `stake_data_provider` | 4 | Insufficient, 5M+, double-stake, admin/non-admin validation |
+| `data_provider_deactivation` | 4 | Active unstake rejection, deactivate+unstake, inactive deactivation, non-owner |
+| `deposit_revenue` | 6 | Pool accumulation + snapshot verification, multi-deposit accumulation, non-admin, wrong vault, zero |
+| `claim_dividends` | 5 | Exact snapshot math + pool decrement verification, double-claim, new-epoch, wrong vault, non-owner |
+| `multi-user fairness` | 1 | Two equal-share users receive **identical** rewards regardless of claim order (snapshot proof) |
+| `claim_referral_share` | 4 | Exact per-partner split from snapshot + pool decrement, double-claim, non-owner, wrong vault |
 
 ## Build & Test
 
@@ -184,7 +187,7 @@ unsys_staking/
 │       └── src/
 │           └── lib.rs        # Program source (~1200 lines)
 ├── tests/
-│   └── unsys_staking.ts     # Integration tests (48 tests)
+│   └── unsys_staking.ts     # Integration tests (47 tests)
 └── migrations/
     └── deploy.ts
 ```

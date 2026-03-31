@@ -293,7 +293,8 @@ export type UnsysStaking = {
       ],
       "accounts": [
         {
-          "name": "globalConfig"
+          "name": "globalConfig",
+          "writable": true
         },
         {
           "name": "userStake",
@@ -332,7 +333,8 @@ export type UnsysStaking = {
       ],
       "accounts": [
         {
-          "name": "globalConfig"
+          "name": "globalConfig",
+          "writable": true
         },
         {
           "name": "partnershipStake",
@@ -423,6 +425,35 @@ export type UnsysStaking = {
         },
         {
           "name": "systemProgram"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "revokeLegacyPartnership",
+      "discriminator": [
+        111,
+        11,
+        67,
+        2,
+        246,
+        107,
+        114,
+        230
+      ],
+      "accounts": [
+        {
+          "name": "globalConfig",
+          "writable": true
+        },
+        {
+          "name": "partnershipStake",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
         }
       ],
       "args": []
@@ -809,6 +840,10 @@ export type UnsysStaking = {
     {
       "code": 6017,
       "name": "invalidAdmin"
+    },
+    {
+      "code": 6018,
+      "name": "notLegacyPartner"
     }
   ],
   "types": [
@@ -867,6 +902,18 @@ export type UnsysStaking = {
           },
           {
             "name": "totalActivePartners",
+            "type": "u64"
+          },
+          {
+            "name": "epochActivePartners",
+            "type": "u64"
+          },
+          {
+            "name": "epochDividendSnapshot",
+            "type": "u64"
+          },
+          {
+            "name": "epochReferralSnapshot",
             "type": "u64"
           },
           {

@@ -23,6 +23,7 @@ pub struct RevenueDeposited {
     pub epoch: u64,
     pub epoch_dividend_pool: u64,
     pub epoch_referral_pool: u64,
+    pub epoch_active_partners: u64,
 }
 
 #[event]
@@ -119,13 +120,17 @@ pub struct LegacyPartnershipEnabled {
     pub tier: u8,
 }
 
+#[event]
+pub struct LegacyPartnershipRevoked {
+    pub user: Pubkey,
+}
+
 #[program]
 pub mod unsys_staking {
     use super::*;
 
     const MIN_DATA_PROVIDER_STAKE: u64 = 5_000_000;
     const BASE_LEGACY_SHARES: u128 = 1_000_000 * 10_000;
-    /// Referral pool is 33% of each deposit (3333 bps)
     const REFERRAL_POOL_BPS: u64 = 3333;
     const BPS_DENOMINATOR: u64 = 10000;
 
@@ -169,6 +174,9 @@ pub mod unsys_staking {
         config.epoch_dividend_pool = 0;
         config.epoch_referral_pool = 0;
         config.total_active_partners = 0;
+        config.epoch_active_partners = 0;
+        config.epoch_dividend_snapshot = 0;
+        config.epoch_referral_snapshot = 0;
         config.bump = ctx.bumps.global_config;
 
         emit!(ConfigInitialized {
@@ -187,15 +195,8 @@ pub mod unsys_staking {
 
     pub fn propose_admin_transfer(ctx: Context<ProposeAdminTransfer>, new_admin: Pubkey) -> Result<()> {
         let config = &mut ctx.accounts.global_config;
-        require_keys_eq!(
-            ctx.accounts.admin.key(),
-            config.admin,
-            ErrorCode::Unauthorized
-        );
-        require!(
-            new_admin != Pubkey::default(),
-            ErrorCode::InvalidAdmin
-        );
+        require_keys_eq!(ctx.accounts.admin.key(), config.admin, ErrorCode::Unauthorized);
+        require!(new_admin != Pubkey::default(), ErrorCode::InvalidAdmin);
 
         config.pending_admin = new_admin;
 
@@ -203,46 +204,30 @@ pub mod unsys_staking {
             current_admin: config.admin,
             pending_admin: new_admin,
         });
-
         msg!("Admin transfer proposed to {}", new_admin);
         Ok(())
     }
 
     pub fn accept_admin_transfer(ctx: Context<AcceptAdminTransfer>) -> Result<()> {
         let config = &mut ctx.accounts.global_config;
-        require_keys_eq!(
-            ctx.accounts.new_admin.key(),
-            config.pending_admin,
-            ErrorCode::Unauthorized
-        );
+        require_keys_eq!(ctx.accounts.new_admin.key(), config.pending_admin, ErrorCode::Unauthorized);
 
         let old_admin = config.admin;
         config.admin = config.pending_admin;
         config.pending_admin = Pubkey::default();
 
-        emit!(AdminTransferAccepted {
-            old_admin,
-            new_admin: config.admin,
-        });
-
+        emit!(AdminTransferAccepted { old_admin, new_admin: config.admin });
         msg!("Admin transferred from {} to {}", old_admin, config.admin);
         Ok(())
     }
 
     pub fn cancel_admin_transfer(ctx: Context<ProposeAdminTransfer>) -> Result<()> {
         let config = &mut ctx.accounts.global_config;
-        require_keys_eq!(
-            ctx.accounts.admin.key(),
-            config.admin,
-            ErrorCode::Unauthorized
-        );
+        require_keys_eq!(ctx.accounts.admin.key(), config.admin, ErrorCode::Unauthorized);
 
         config.pending_admin = Pubkey::default();
 
-        emit!(AdminTransferCancelled {
-            admin: config.admin,
-        });
-
+        emit!(AdminTransferCancelled { admin: config.admin });
         msg!("Admin transfer cancelled");
         Ok(())
     }
@@ -253,11 +238,7 @@ pub mod unsys_staking {
 
     pub fn deposit_revenue(ctx: Context<DepositRevenue>, amount: u64) -> Result<()> {
         require!(amount > 0, ErrorCode::InvalidAmount);
-        require_keys_eq!(
-            ctx.accounts.admin.key(),
-            ctx.accounts.global_config.admin,
-            ErrorCode::Unauthorized
-        );
+        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
 
         let cpi_accounts = Transfer {
             from: ctx.accounts.admin_usdc_ata.to_account_info(),
@@ -269,35 +250,33 @@ pub mod unsys_staking {
 
         let config = &mut ctx.accounts.global_config;
 
-        // Split deposit into dividend pool and referral pool
-        let referral_amount = amount
-            .checked_mul(REFERRAL_POOL_BPS)
-            .unwrap()
-            .checked_div(BPS_DENOMINATOR)
-            .unwrap();
+        let referral_amount = amount.checked_mul(REFERRAL_POOL_BPS).unwrap().checked_div(BPS_DENOMINATOR).unwrap();
         let dividend_amount = amount.checked_sub(referral_amount).unwrap();
 
         // Accumulate: unclaimed funds from prior epochs roll forward
-        config.epoch_dividend_pool = config
-            .epoch_dividend_pool
-            .checked_add(dividend_amount)
-            .unwrap();
-        config.epoch_referral_pool = config
-            .epoch_referral_pool
-            .checked_add(referral_amount)
-            .unwrap();
+        config.epoch_dividend_pool = config.epoch_dividend_pool.checked_add(dividend_amount).unwrap();
+        config.epoch_referral_pool = config.epoch_referral_pool.checked_add(referral_amount).unwrap();
         config.dividend_epoch = config.dividend_epoch.checked_add(1).unwrap();
+
+        // Snapshot pools at deposit time for fair per-user calculation
+        // Claims calculate from these snapshots; epoch_*_pool tracks remaining balance
+        config.epoch_dividend_snapshot = config.epoch_dividend_pool;
+        config.epoch_referral_snapshot = config.epoch_referral_pool;
+
+        // Snapshot active partners at deposit time for fair referral split
+        config.epoch_active_partners = config.total_active_partners;
 
         emit!(RevenueDeposited {
             amount,
             epoch: config.dividend_epoch,
             epoch_dividend_pool: config.epoch_dividend_pool,
             epoch_referral_pool: config.epoch_referral_pool,
+            epoch_active_partners: config.epoch_active_partners,
         });
 
         msg!(
-            "Deposited {} USDC (epoch {}, div_pool={}, ref_pool={})",
-            amount, config.dividend_epoch, config.epoch_dividend_pool, config.epoch_referral_pool
+            "Deposited {} USDC (epoch {}, div_pool={}, ref_pool={}, partners={})",
+            amount, config.dividend_epoch, config.epoch_dividend_pool, config.epoch_referral_pool, config.epoch_active_partners
         );
         Ok(())
     }
@@ -306,16 +285,11 @@ pub mod unsys_staking {
     // Dividend staking
     // ----------------------------------------------------------------
 
-    pub fn stake_dividends(
-        ctx: Context<StakeDividends>,
-        amount: u64,
-        lock_months: u8,
-    ) -> Result<()> {
+    pub fn stake_dividends(ctx: Context<StakeDividends>, amount: u64, lock_months: u8) -> Result<()> {
         require!(amount > 0, ErrorCode::InvalidAmount);
 
         let stake = &mut ctx.accounts.user_stake;
         let clock = Clock::get()?;
-
         require!(stake.amount == 0, ErrorCode::StakeAlreadyExists);
 
         let multiplier_bps = match lock_months {
@@ -343,21 +317,9 @@ pub mod unsys_staking {
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
         token::transfer(cpi_ctx, amount)?;
 
-        ctx.accounts.global_config.total_dividend_shares = ctx
-            .accounts
-            .global_config
-            .total_dividend_shares
-            .checked_add(shares)
-            .unwrap();
+        ctx.accounts.global_config.total_dividend_shares = ctx.accounts.global_config.total_dividend_shares.checked_add(shares).unwrap();
 
-        emit!(DividendStakedEvent {
-            user: ctx.accounts.user.key(),
-            amount,
-            lock_months,
-            shares,
-            multiplier_bps,
-        });
-
+        emit!(DividendStakedEvent { user: ctx.accounts.user.key(), amount, lock_months, shares, multiplier_bps });
         msg!("Staked {} $UNSYS for {} months", amount, lock_months);
         Ok(())
     }
@@ -367,10 +329,7 @@ pub mod unsys_staking {
         let clock = Clock::get()?;
 
         require!(stake.amount > 0, ErrorCode::NoActiveStake);
-        require!(
-            clock.unix_timestamp >= stake.lock_end,
-            ErrorCode::LockPeriodNotExpired
-        );
+        require!(clock.unix_timestamp >= stake.lock_end, ErrorCode::LockPeriodNotExpired);
 
         let amount = stake.amount;
         let shares = stake.shares;
@@ -384,11 +343,7 @@ pub mod unsys_staking {
             to: ctx.accounts.user_unsys_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            cpi_accounts,
-            signer_seeds,
-        );
+        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
         token::transfer(cpi_ctx, amount)?;
 
         stake.amount = 0;
@@ -396,53 +351,43 @@ pub mod unsys_staking {
         stake.lock_end = 0;
         stake.multiplier_bps = 0;
 
-        ctx.accounts.global_config.total_dividend_shares = ctx
-            .accounts
-            .global_config
-            .total_dividend_shares
-            .saturating_sub(shares);
+        ctx.accounts.global_config.total_dividend_shares = ctx.accounts.global_config.total_dividend_shares.saturating_sub(shares);
 
-        emit!(DividendUnstakedEvent {
-            user: ctx.accounts.user.key(),
-            amount,
-        });
-
+        emit!(DividendUnstakedEvent { user: ctx.accounts.user.key(), amount });
         msg!("Unstaked {} $UNSYS dividends", amount);
         Ok(())
     }
 
     // ----------------------------------------------------------------
-    // Claim dividends (snapshot-based)
+    // Claim dividends (snapshot-based, pool-decrementing)
     // ----------------------------------------------------------------
 
     pub fn claim_dividends(ctx: Context<ClaimDividends>) -> Result<()> {
         let stake = &mut ctx.accounts.user_stake;
-        let config = &ctx.accounts.global_config;
+        let config = &mut ctx.accounts.global_config;
 
-        // Early exit if no active stake (e.g. after unstake)
         require!(stake.shares > 0, ErrorCode::NoActiveStake);
+        require!(stake.last_claim_epoch < config.dividend_epoch, ErrorCode::AlreadyClaimed);
 
-        require!(
-            stake.last_claim_epoch < config.dividend_epoch,
-            ErrorCode::AlreadyClaimed
-        );
-
-        let pool = config.epoch_dividend_pool;
-        require!(pool > 0, ErrorCode::NoRevenueToClaim);
+        // Use snapshot for fair calculation (same value for all claimers in this epoch)
+        let snapshot = config.epoch_dividend_snapshot;
+        require!(snapshot > 0, ErrorCode::NoRevenueToClaim);
 
         let user_reward = if config.total_dividend_shares > 0 {
-            ((stake.shares as u128 * pool as u128) / config.total_dividend_shares as u128) as u64
+            ((stake.shares as u128 * snapshot as u128) / config.total_dividend_shares as u128) as u64
         } else {
             0
         };
 
         require!(user_reward > 0, ErrorCode::NoRevenueToClaim);
 
-        // Safety: check actual vault balance
         let vault_balance = ctx.accounts.revenue_vault.amount;
         require!(user_reward <= vault_balance, ErrorCode::InsufficientRevenue);
 
-        let bump = [config.bump];
+        // Extract bump before mutable borrow for CPI
+        let config_bump = config.bump;
+        let current_epoch = config.dividend_epoch;
+        let bump = [config_bump];
         let signer_seeds = &[&[b"global_config_v3".as_ref(), &bump][..]];
 
         let cpi_accounts = Transfer {
@@ -450,28 +395,23 @@ pub mod unsys_staking {
             to: ctx.accounts.user_usdc_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            cpi_accounts,
-            signer_seeds,
-        );
+        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
         token::transfer(cpi_ctx, user_reward)?;
 
+        // Decrement pool to keep accounting in sync with vault
+        let config = &mut ctx.accounts.global_config;
+        config.epoch_dividend_pool = config.epoch_dividend_pool.saturating_sub(user_reward);
+
         stake.last_claim_ts = Clock::get()?.unix_timestamp;
-        stake.last_claim_epoch = config.dividend_epoch;
+        stake.last_claim_epoch = current_epoch;
 
-        emit!(DividendClaimedEvent {
-            user: ctx.accounts.user.key(),
-            amount: user_reward,
-            epoch: config.dividend_epoch,
-        });
-
-        msg!("Claimed {} USDC dividends (epoch {})", user_reward, config.dividend_epoch);
+        emit!(DividendClaimedEvent { user: ctx.accounts.user.key(), amount: user_reward, epoch: current_epoch });
+        msg!("Claimed {} USDC dividends (epoch {})", user_reward, current_epoch);
         Ok(())
     }
 
     // ----------------------------------------------------------------
-    // Claim referral share (snapshot-based, per-partner share)
+    // Claim referral share (snapshot-based, pool-decrementing)
     // ----------------------------------------------------------------
 
     pub fn claim_referral_share(ctx: Context<ClaimReferralShare>) -> Result<()> {
@@ -481,27 +421,27 @@ pub mod unsys_staking {
             ErrorCode::NoActiveStake
         );
 
-        let config = &ctx.accounts.global_config;
-        require!(
-            partnership.last_claim_epoch < config.dividend_epoch,
-            ErrorCode::AlreadyClaimed
-        );
+        let config = &mut ctx.accounts.global_config;
+        require!(partnership.last_claim_epoch < config.dividend_epoch, ErrorCode::AlreadyClaimed);
 
-        let pool = config.epoch_referral_pool;
-        require!(pool > 0, ErrorCode::NoRevenueToClaim);
+        // Use snapshot for fair calculation (same value for all partners in this epoch)
+        let snapshot = config.epoch_referral_snapshot;
+        require!(snapshot > 0, ErrorCode::NoRevenueToClaim);
 
-        // Divide referral pool equally among active partners
-        // Note: integer division truncates; dust remains in vault (standard on-chain behavior)
-        let total_partners = config.total_active_partners;
+        // Use snapshotted partner count from deposit time (not live count)
+        let total_partners = config.epoch_active_partners;
         require!(total_partners > 0, ErrorCode::NoRevenueToClaim);
 
-        let amount = pool.checked_div(total_partners).unwrap();
+        // Integer division truncates; dust remains in pool (standard on-chain behavior)
+        let amount = snapshot.checked_div(total_partners).unwrap();
         require!(amount > 0, ErrorCode::NoRevenueToClaim);
 
         let vault_balance = ctx.accounts.revenue_vault.amount;
         require!(amount <= vault_balance, ErrorCode::InsufficientRevenue);
 
-        let bump = [config.bump];
+        let config_bump = config.bump;
+        let current_epoch = config.dividend_epoch;
+        let bump = [config_bump];
         let signer_seeds = &[&[b"global_config_v3".as_ref(), &bump][..]];
 
         let cpi_accounts = Transfer {
@@ -509,22 +449,17 @@ pub mod unsys_staking {
             to: ctx.accounts.user_usdc_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            cpi_accounts,
-            signer_seeds,
-        );
+        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
         token::transfer(cpi_ctx, amount)?;
 
-        partnership.last_claim_epoch = config.dividend_epoch;
+        // Decrement pool to keep accounting in sync with vault
+        let config = &mut ctx.accounts.global_config;
+        config.epoch_referral_pool = config.epoch_referral_pool.saturating_sub(amount);
 
-        emit!(ReferralShareClaimedEvent {
-            user: ctx.accounts.user.key(),
-            amount,
-            epoch: config.dividend_epoch,
-        });
+        partnership.last_claim_epoch = current_epoch;
 
-        msg!("Claimed {} USDC referral share (epoch {})", amount, config.dividend_epoch);
+        emit!(ReferralShareClaimedEvent { user: ctx.accounts.user.key(), amount, epoch: current_epoch });
+        msg!("Claimed {} USDC referral share (epoch {})", amount, current_epoch);
         Ok(())
     }
 
@@ -533,19 +468,11 @@ pub mod unsys_staking {
     // ----------------------------------------------------------------
 
     pub fn enable_legacy_dividends(ctx: Context<EnableLegacyDividends>) -> Result<()> {
-        require!(
-            ctx.accounts.legacy_omega_stake.registered,
-            ErrorCode::NotLegacyOmega
-        );
+        require!(ctx.accounts.legacy_omega_stake.registered, ErrorCode::NotLegacyOmega);
         let stake = &mut ctx.accounts.dividend_stake;
-
-        require!(
-            stake.amount == 0 && stake.shares == 0,
-            ErrorCode::StakeAlreadyExists
-        );
+        require!(stake.amount == 0 && stake.shares == 0, ErrorCode::StakeAlreadyExists);
 
         let clock = Clock::get()?;
-
         stake.owner = ctx.accounts.user.key();
         stake.amount = 0;
         stake.shares = BASE_LEGACY_SHARES;
@@ -555,34 +482,17 @@ pub mod unsys_staking {
         stake.last_claim_epoch = ctx.accounts.global_config.dividend_epoch;
         stake.bump = ctx.bumps.dividend_stake;
 
-        ctx.accounts.global_config.total_dividend_shares = ctx
-            .accounts
-            .global_config
-            .total_dividend_shares
-            .checked_add(BASE_LEGACY_SHARES)
-            .unwrap();
+        ctx.accounts.global_config.total_dividend_shares = ctx.accounts.global_config.total_dividend_shares.checked_add(BASE_LEGACY_SHARES).unwrap();
 
-        emit!(LegacyDividendsEnabled {
-            user: ctx.accounts.user.key(),
-            shares: BASE_LEGACY_SHARES,
-        });
-
+        emit!(LegacyDividendsEnabled { user: ctx.accounts.user.key(), shares: BASE_LEGACY_SHARES });
         msg!("Legacy Omega now earns passive dividends");
         Ok(())
     }
 
     pub fn enable_legacy_partnership(ctx: Context<EnableLegacyPartnership>) -> Result<()> {
-        require!(
-            ctx.accounts.legacy_omega_stake.registered,
-            ErrorCode::NotLegacyOmega
-        );
+        require!(ctx.accounts.legacy_omega_stake.registered, ErrorCode::NotLegacyOmega);
         let stake = &mut ctx.accounts.partnership_stake;
-
-        // Prevent overwriting existing partnership
-        require!(
-            stake.staked_amount == 0 && stake.tier == 0,
-            ErrorCode::StakeAlreadyExists
-        );
+        require!(stake.staked_amount == 0 && stake.tier == 0, ErrorCode::StakeAlreadyExists);
 
         stake.owner = ctx.accounts.user.key();
         stake.staked_amount = 0;
@@ -591,19 +501,25 @@ pub mod unsys_staking {
         stake.last_claim_epoch = ctx.accounts.global_config.dividend_epoch;
         stake.bump = ctx.bumps.partnership_stake;
 
-        ctx.accounts.global_config.total_active_partners = ctx
-            .accounts
-            .global_config
-            .total_active_partners
-            .checked_add(1)
-            .unwrap();
+        ctx.accounts.global_config.total_active_partners = ctx.accounts.global_config.total_active_partners.checked_add(1).unwrap();
 
-        emit!(LegacyPartnershipEnabled {
-            user: ctx.accounts.user.key(),
-            tier: 2,
-        });
-
+        emit!(LegacyPartnershipEnabled { user: ctx.accounts.user.key(), tier: 2 });
         msg!("Legacy Omega now has 30% referral tier");
+        Ok(())
+    }
+
+    pub fn revoke_legacy_partnership(ctx: Context<RevokeLegacyPartnership>) -> Result<()> {
+        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
+
+        let stake = &mut ctx.accounts.partnership_stake;
+        require!(stake.tier == 2, ErrorCode::NotLegacyPartner);
+
+        stake.tier = 0;
+
+        ctx.accounts.global_config.total_active_partners = ctx.accounts.global_config.total_active_partners.saturating_sub(1);
+
+        emit!(LegacyPartnershipRevoked { user: stake.owner });
+        msg!("Legacy partnership revoked for {}", stake.owner);
         Ok(())
     }
 
@@ -616,10 +532,7 @@ pub mod unsys_staking {
 
         let stake = &mut ctx.accounts.data_provider_stake;
         require!(stake.staked_amount == 0, ErrorCode::StakeAlreadyExists);
-        require!(
-            amount >= MIN_DATA_PROVIDER_STAKE,
-            ErrorCode::InsufficientDataProviderStake
-        );
+        require!(amount >= MIN_DATA_PROVIDER_STAKE, ErrorCode::InsufficientDataProviderStake);
 
         stake.owner = ctx.accounts.user.key();
         stake.staked_amount = amount;
@@ -634,32 +547,18 @@ pub mod unsys_staking {
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
         token::transfer(cpi_ctx, amount)?;
 
-        emit!(DataProviderStakedEvent {
-            user: ctx.accounts.user.key(),
-            amount,
-        });
-
+        emit!(DataProviderStakedEvent { user: ctx.accounts.user.key(), amount });
         msg!("Data Provider registered: {} $UNSYS", amount);
         Ok(())
     }
 
     pub fn deactivate_data_provider(ctx: Context<DeactivateDataProvider>) -> Result<()> {
-        require_keys_eq!(
-            ctx.accounts.admin.key(),
-            ctx.accounts.global_config.admin,
-            ErrorCode::Unauthorized
-        );
-        require!(
-            ctx.accounts.data_provider_stake.active,
-            ErrorCode::NotActive
-        );
+        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
+        require!(ctx.accounts.data_provider_stake.active, ErrorCode::NotActive);
 
         ctx.accounts.data_provider_stake.active = false;
 
-        emit!(DataProviderDeactivatedEvent {
-            user: ctx.accounts.data_provider_stake.owner,
-        });
-
+        emit!(DataProviderDeactivatedEvent { user: ctx.accounts.data_provider_stake.owner });
         msg!("Data Provider deactivated");
         Ok(())
     }
@@ -670,7 +569,6 @@ pub mod unsys_staking {
         require!(!stake.active, ErrorCode::MustDeactivateFirst);
 
         let amount = stake.staked_amount;
-
         let config = &ctx.accounts.global_config;
         let bump = [config.bump];
         let signer_seeds = &[&[b"global_config_v3".as_ref(), &bump][..]];
@@ -680,37 +578,22 @@ pub mod unsys_staking {
             to: ctx.accounts.user_unsys_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            cpi_accounts,
-            signer_seeds,
-        );
+        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
         token::transfer(cpi_ctx, amount)?;
 
         stake.staked_amount = 0;
         stake.active = false;
 
-        emit!(DataProviderUnstakedEvent {
-            user: ctx.accounts.user.key(),
-            amount,
-        });
-
+        emit!(DataProviderUnstakedEvent { user: ctx.accounts.user.key(), amount });
         msg!("Unstaked {} $UNSYS data provider", amount);
         Ok(())
     }
 
     pub fn validate_data_provider(ctx: Context<ValidateDataProvider>) -> Result<()> {
-        require_keys_eq!(
-            ctx.accounts.admin.key(),
-            ctx.accounts.global_config.admin,
-            ErrorCode::Unauthorized
-        );
+        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
         ctx.accounts.data_provider_stake.active = true;
 
-        emit!(DataProviderValidatedEvent {
-            user: ctx.accounts.data_provider_stake.owner,
-        });
-
+        emit!(DataProviderValidatedEvent { user: ctx.accounts.data_provider_stake.owner });
         msg!("Data Provider validated & activated");
         Ok(())
     }
@@ -719,11 +602,7 @@ pub mod unsys_staking {
     // Partnership
     // ----------------------------------------------------------------
 
-    pub fn stake_partnership(
-        ctx: Context<StakePartnership>,
-        amount: u64,
-        referrer: Option<Pubkey>,
-    ) -> Result<()> {
+    pub fn stake_partnership(ctx: Context<StakePartnership>, amount: u64, referrer: Option<Pubkey>) -> Result<()> {
         require!(amount > 0, ErrorCode::InvalidAmount);
 
         let stake = &mut ctx.accounts.partnership_stake;
@@ -744,34 +623,18 @@ pub mod unsys_staking {
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
         token::transfer(cpi_ctx, amount)?;
 
-        ctx.accounts.global_config.total_active_partners = ctx
-            .accounts
-            .global_config
-            .total_active_partners
-            .checked_add(1)
-            .unwrap();
+        ctx.accounts.global_config.total_active_partners = ctx.accounts.global_config.total_active_partners.checked_add(1).unwrap();
 
-        emit!(PartnershipStakedEvent {
-            user: ctx.accounts.user.key(),
-            amount,
-            referrer,
-        });
-
+        emit!(PartnershipStakedEvent { user: ctx.accounts.user.key(), amount, referrer });
         msg!("Partnership stake active: {} $UNSYS", amount);
         Ok(())
     }
 
-    pub fn unstake_partnership(
-        ctx: Context<UnstakePartnership>,
-        amount_to_unstake: u64,
-    ) -> Result<()> {
+    pub fn unstake_partnership(ctx: Context<UnstakePartnership>, amount_to_unstake: u64) -> Result<()> {
         require!(amount_to_unstake > 0, ErrorCode::InvalidAmount);
 
         let stake = &mut ctx.accounts.partnership_stake;
-        require!(
-            stake.staked_amount >= amount_to_unstake,
-            ErrorCode::InsufficientStake
-        );
+        require!(stake.staked_amount >= amount_to_unstake, ErrorCode::InsufficientStake);
 
         let config = &ctx.accounts.global_config;
         let bump = [config.bump];
@@ -782,11 +645,7 @@ pub mod unsys_staking {
             to: ctx.accounts.user_unsys_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            cpi_accounts,
-            signer_seeds,
-        );
+        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
         token::transfer(cpi_ctx, amount_to_unstake)?;
 
         stake.staked_amount -= amount_to_unstake;
@@ -794,20 +653,11 @@ pub mod unsys_staking {
         let fully_unstaked = stake.staked_amount == 0;
         if fully_unstaked && stake.tier != 2 {
             stake.tier = 0;
-            ctx.accounts.global_config.total_active_partners = ctx
-                .accounts
-                .global_config
-                .total_active_partners
-                .saturating_sub(1);
+            ctx.accounts.global_config.total_active_partners = ctx.accounts.global_config.total_active_partners.saturating_sub(1);
             msg!("Fully unstaked - partner status REVOKED");
         }
 
-        emit!(PartnershipUnstakedEvent {
-            user: ctx.accounts.user.key(),
-            amount: amount_to_unstake,
-            fully_unstaked,
-        });
-
+        emit!(PartnershipUnstakedEvent { user: ctx.accounts.user.key(), amount: amount_to_unstake, fully_unstaked });
         Ok(())
     }
 }
@@ -818,13 +668,7 @@ pub mod unsys_staking {
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(
-        init_if_needed,
-        payer = admin,
-        space = 8 + 500,
-        seeds = [b"global_config_v3"],
-        bump
-    )]
+    #[account(init_if_needed, payer = admin, space = 8 + 500, seeds = [b"global_config_v3"], bump)]
     pub global_config: Account<'info, GlobalConfig>,
     #[account(mut)]
     pub admin: Signer<'info>,
@@ -844,11 +688,7 @@ pub struct Initialize<'info> {
 
 #[derive(Accounts)]
 pub struct ProposeAdminTransfer<'info> {
-    #[account(
-        mut,
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
     #[account(mut)]
     pub admin: Signer<'info>,
@@ -856,11 +696,7 @@ pub struct ProposeAdminTransfer<'info> {
 
 #[derive(Accounts)]
 pub struct AcceptAdminTransfer<'info> {
-    #[account(
-        mut,
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
     #[account(mut)]
     pub new_admin: Signer<'info>,
@@ -868,31 +704,24 @@ pub struct AcceptAdminTransfer<'info> {
 
 #[derive(Accounts)]
 pub struct DepositRevenue<'info> {
-    #[account(
-        mut,
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
     #[account(mut)]
     pub admin: Signer<'info>,
-    #[account(mut)]
-    pub admin_usdc_ata: Account<'info, TokenAccount>,
     #[account(
         mut,
-        constraint = revenue_vault.key() == global_config.revenue_vault @ ErrorCode::InvalidVault
+        constraint = admin_usdc_ata.owner == admin.key() @ ErrorCode::InvalidTokenAccount,
+        constraint = admin_usdc_ata.mint == global_config.usdc_mint @ ErrorCode::InvalidTokenAccount,
     )]
+    pub admin_usdc_ata: Account<'info, TokenAccount>,
+    #[account(mut, constraint = revenue_vault.key() == global_config.revenue_vault @ ErrorCode::InvalidVault)]
     pub revenue_vault: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
 pub struct StakeDividends<'info> {
-    #[account(
-        mut,
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
     #[account(init_if_needed, payer = user, space = 8 + 200, seeds = [b"dividend_stake", user.key().as_ref()], bump)]
     pub user_stake: Account<'info, DividendStake>,
@@ -900,13 +729,11 @@ pub struct StakeDividends<'info> {
     pub user: Signer<'info>,
     #[account(
         mut,
-        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount
+        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
+        constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
     pub user_unsys_ata: Account<'info, TokenAccount>,
-    #[account(
-        mut,
-        constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault
-    )]
+    #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
     pub token_vault: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
@@ -914,41 +741,26 @@ pub struct StakeDividends<'info> {
 
 #[derive(Accounts)]
 pub struct UnstakeDividends<'info> {
-    #[account(
-        mut,
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
-    #[account(
-        mut,
-        seeds = [b"dividend_stake", user.key().as_ref()],
-        bump = user_stake.bump,
-        constraint = user_stake.owner == user.key() @ ErrorCode::Unauthorized,
-    )]
+    #[account(mut, seeds = [b"dividend_stake", user.key().as_ref()], bump = user_stake.bump, constraint = user_stake.owner == user.key() @ ErrorCode::Unauthorized)]
     pub user_stake: Account<'info, DividendStake>,
     #[account(mut)]
     pub user: Signer<'info>,
     #[account(
         mut,
-        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount
+        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
+        constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
     pub user_unsys_ata: Account<'info, TokenAccount>,
-    #[account(
-        mut,
-        constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault
-    )]
+    #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
     pub token_vault: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
 pub struct EnableLegacyDividends<'info> {
-    #[account(
-        mut,
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
     #[account(init_if_needed, payer = user, space = 8 + 200, seeds = [b"dividend_stake", user.key().as_ref()], bump)]
     pub dividend_stake: Account<'info, DividendStake>,
@@ -960,11 +772,7 @@ pub struct EnableLegacyDividends<'info> {
 
 #[derive(Accounts)]
 pub struct EnableLegacyPartnership<'info> {
-    #[account(
-        mut,
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
     #[account(init_if_needed, payer = user, space = 8 + 150, seeds = [b"partnership_stake", user.key().as_ref()], bump)]
     pub partnership_stake: Account<'info, PartnershipStake>,
@@ -975,11 +783,22 @@ pub struct EnableLegacyPartnership<'info> {
 }
 
 #[derive(Accounts)]
-pub struct StakeDataProvider<'info> {
+pub struct RevokeLegacyPartnership<'info> {
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
+    pub global_config: Account<'info, GlobalConfig>,
     #[account(
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
+        mut,
+        seeds = [b"partnership_stake", partnership_stake.owner.as_ref()],
+        bump = partnership_stake.bump,
     )]
+    pub partnership_stake: Account<'info, PartnershipStake>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct StakeDataProvider<'info> {
+    #[account(seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
     #[account(init_if_needed, payer = user, space = 8 + 100, seeds = [b"data_provider_stake", user.key().as_ref()], bump)]
     pub data_provider_stake: Account<'info, DataProviderStake>,
@@ -987,13 +806,11 @@ pub struct StakeDataProvider<'info> {
     pub user: Signer<'info>,
     #[account(
         mut,
-        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount
+        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
+        constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
     pub user_unsys_ata: Account<'info, TokenAccount>,
-    #[account(
-        mut,
-        constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault
-    )]
+    #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
     pub token_vault: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
@@ -1001,16 +818,9 @@ pub struct StakeDataProvider<'info> {
 
 #[derive(Accounts)]
 pub struct DeactivateDataProvider<'info> {
-    #[account(
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
-    #[account(
-        mut,
-        seeds = [b"data_provider_stake", data_provider_stake.owner.as_ref()],
-        bump = data_provider_stake.bump,
-    )]
+    #[account(mut, seeds = [b"data_provider_stake", data_provider_stake.owner.as_ref()], bump = data_provider_stake.bump)]
     pub data_provider_stake: Account<'info, DataProviderStake>,
     #[account(mut)]
     pub admin: Signer<'info>,
@@ -1018,46 +828,28 @@ pub struct DeactivateDataProvider<'info> {
 
 #[derive(Accounts)]
 pub struct UnstakeDataProvider<'info> {
-    #[account(
-        mut,
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
-    #[account(
-        mut,
-        seeds = [b"data_provider_stake", user.key().as_ref()],
-        bump = data_provider_stake.bump,
-        constraint = data_provider_stake.owner == user.key() @ ErrorCode::Unauthorized,
-    )]
+    #[account(mut, seeds = [b"data_provider_stake", user.key().as_ref()], bump = data_provider_stake.bump, constraint = data_provider_stake.owner == user.key() @ ErrorCode::Unauthorized)]
     pub data_provider_stake: Account<'info, DataProviderStake>,
     #[account(mut)]
     pub user: Signer<'info>,
     #[account(
         mut,
-        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount
+        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
+        constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
     pub user_unsys_ata: Account<'info, TokenAccount>,
-    #[account(
-        mut,
-        constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault
-    )]
+    #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
     pub token_vault: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
 pub struct ValidateDataProvider<'info> {
-    #[account(
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
-    #[account(
-        mut,
-        seeds = [b"data_provider_stake", data_provider_stake.owner.as_ref()],
-        bump = data_provider_stake.bump,
-    )]
+    #[account(mut, seeds = [b"data_provider_stake", data_provider_stake.owner.as_ref()], bump = data_provider_stake.bump)]
     pub data_provider_stake: Account<'info, DataProviderStake>,
     #[account(mut)]
     pub admin: Signer<'info>,
@@ -1065,11 +857,7 @@ pub struct ValidateDataProvider<'info> {
 
 #[derive(Accounts)]
 pub struct StakePartnership<'info> {
-    #[account(
-        mut,
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
     #[account(init_if_needed, payer = user, space = 8 + 150, seeds = [b"partnership_stake", user.key().as_ref()], bump)]
     pub partnership_stake: Account<'info, PartnershipStake>,
@@ -1077,13 +865,11 @@ pub struct StakePartnership<'info> {
     pub user: Signer<'info>,
     #[account(
         mut,
-        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount
+        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
+        constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
     pub user_unsys_ata: Account<'info, TokenAccount>,
-    #[account(
-        mut,
-        constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault
-    )]
+    #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
     pub token_vault: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
@@ -1091,29 +877,18 @@ pub struct StakePartnership<'info> {
 
 #[derive(Accounts)]
 pub struct UnstakePartnership<'info> {
-    #[account(
-        mut,
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
-    #[account(
-        mut,
-        seeds = [b"partnership_stake", user.key().as_ref()],
-        bump = partnership_stake.bump,
-        constraint = partnership_stake.owner == user.key() @ ErrorCode::Unauthorized
-    )]
+    #[account(mut, seeds = [b"partnership_stake", user.key().as_ref()], bump = partnership_stake.bump, constraint = partnership_stake.owner == user.key() @ ErrorCode::Unauthorized)]
     pub partnership_stake: Account<'info, PartnershipStake>,
     #[account(mut)]
     pub user: Signer<'info>,
-    #[account(
-        mut,
-        constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault
-    )]
+    #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
     pub token_vault: Account<'info, TokenAccount>,
     #[account(
         mut,
-        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount
+        constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
+        constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
     pub user_unsys_ata: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
@@ -1121,29 +896,18 @@ pub struct UnstakePartnership<'info> {
 
 #[derive(Accounts)]
 pub struct ClaimDividends<'info> {
-    #[account(
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
-    #[account(
-        mut,
-        seeds = [b"dividend_stake", user.key().as_ref()],
-        bump = user_stake.bump,
-        constraint = user_stake.owner == user.key() @ ErrorCode::Unauthorized
-    )]
+    #[account(mut, seeds = [b"dividend_stake", user.key().as_ref()], bump = user_stake.bump, constraint = user_stake.owner == user.key() @ ErrorCode::Unauthorized)]
     pub user_stake: Account<'info, DividendStake>,
     #[account(mut)]
     pub user: Signer<'info>,
-    #[account(
-        mut,
-        constraint = revenue_vault.key() == global_config.revenue_vault @ ErrorCode::InvalidVault
-    )]
+    #[account(mut, constraint = revenue_vault.key() == global_config.revenue_vault @ ErrorCode::InvalidVault)]
     pub revenue_vault: Account<'info, TokenAccount>,
     #[account(
         mut,
         constraint = user_usdc_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
-        constraint = user_usdc_ata.mint == global_config.usdc_mint @ ErrorCode::InvalidTokenAccount
+        constraint = user_usdc_ata.mint == global_config.usdc_mint @ ErrorCode::InvalidTokenAccount,
     )]
     pub user_usdc_ata: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
@@ -1151,29 +915,18 @@ pub struct ClaimDividends<'info> {
 
 #[derive(Accounts)]
 pub struct ClaimReferralShare<'info> {
-    #[account(
-        seeds = [b"global_config_v3"],
-        bump = global_config.bump,
-    )]
+    #[account(mut, seeds = [b"global_config_v3"], bump = global_config.bump)]
     pub global_config: Account<'info, GlobalConfig>,
-    #[account(
-        mut,
-        seeds = [b"partnership_stake", user.key().as_ref()],
-        bump = partnership_stake.bump,
-        constraint = partnership_stake.owner == user.key() @ ErrorCode::Unauthorized
-    )]
+    #[account(mut, seeds = [b"partnership_stake", user.key().as_ref()], bump = partnership_stake.bump, constraint = partnership_stake.owner == user.key() @ ErrorCode::Unauthorized)]
     pub partnership_stake: Account<'info, PartnershipStake>,
     #[account(mut)]
     pub user: Signer<'info>,
-    #[account(
-        mut,
-        constraint = revenue_vault.key() == global_config.revenue_vault @ ErrorCode::InvalidVault
-    )]
+    #[account(mut, constraint = revenue_vault.key() == global_config.revenue_vault @ ErrorCode::InvalidVault)]
     pub revenue_vault: Account<'info, TokenAccount>,
     #[account(
         mut,
         constraint = user_usdc_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
-        constraint = user_usdc_ata.mint == global_config.usdc_mint @ ErrorCode::InvalidTokenAccount
+        constraint = user_usdc_ata.mint == global_config.usdc_mint @ ErrorCode::InvalidTokenAccount,
     )]
     pub user_usdc_ata: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
@@ -1198,6 +951,9 @@ pub struct GlobalConfig {
     pub epoch_dividend_pool: u64,
     pub epoch_referral_pool: u64,
     pub total_active_partners: u64,
+    pub epoch_active_partners: u64,
+    pub epoch_dividend_snapshot: u64,
+    pub epoch_referral_snapshot: u64,
     pub bump: u8,
 }
 
@@ -1272,7 +1028,7 @@ pub enum ErrorCode {
     AlreadyClaimed,
     #[msg("Amount must be greater than zero")]
     InvalidAmount,
-    #[msg("Invalid token account owner")]
+    #[msg("Invalid token account owner or mint")]
     InvalidTokenAccount,
     #[msg("Data provider must be deactivated before unstaking")]
     MustDeactivateFirst,
@@ -1280,4 +1036,6 @@ pub enum ErrorCode {
     NotActive,
     #[msg("New admin cannot be the zero address")]
     InvalidAdmin,
+    #[msg("Not a legacy tier-2 partner")]
+    NotLegacyPartner,
 }
