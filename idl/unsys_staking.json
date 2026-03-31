@@ -189,9 +189,6 @@
         },
         {
           "name": "token_program"
-        },
-        {
-          "name": "owner"
         }
       ],
       "args": []
@@ -276,6 +273,9 @@
       ],
       "accounts": [
         {
+          "name": "global_config"
+        },
+        {
           "name": "data_provider_stake",
           "writable": true
         },
@@ -305,6 +305,46 @@
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "unstake_data_provider",
+      "discriminator": [
+        209,
+        104,
+        77,
+        28,
+        168,
+        96,
+        48,
+        22
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "data_provider_stake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user_unsys_ata",
+          "writable": true
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
     },
     {
       "name": "validate_data_provider",
@@ -349,6 +389,9 @@
       ],
       "accounts": [
         {
+          "name": "global_config"
+        },
+        {
           "name": "partnership_stake",
           "writable": true
         },
@@ -370,9 +413,6 @@
         },
         {
           "name": "system_program"
-        },
-        {
-          "name": "global_config"
         }
       ],
       "args": [
@@ -402,6 +442,10 @@
       ],
       "accounts": [
         {
+          "name": "global_config",
+          "writable": true
+        },
+        {
           "name": "partnership_stake",
           "writable": true
         },
@@ -409,10 +453,6 @@
           "name": "user",
           "writable": true,
           "signer": true
-        },
-        {
-          "name": "global_config",
-          "writable": true
         },
         {
           "name": "token_vault",
@@ -447,8 +487,7 @@
       ],
       "accounts": [
         {
-          "name": "global_config",
-          "writable": true
+          "name": "global_config"
         },
         {
           "name": "user_stake",
@@ -487,11 +526,11 @@
       ],
       "accounts": [
         {
-          "name": "global_config",
-          "writable": true
+          "name": "global_config"
         },
         {
-          "name": "partnership_stake"
+          "name": "partnership_stake",
+          "writable": true
         },
         {
           "name": "user",
@@ -640,6 +679,21 @@
       "code": 6011,
       "name": "InvalidVault",
       "msg": "Invalid vault account"
+    },
+    {
+      "code": 6012,
+      "name": "AlreadyClaimed",
+      "msg": "Already claimed for this epoch"
+    },
+    {
+      "code": 6013,
+      "name": "InvalidAmount",
+      "msg": "Amount must be greater than zero"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidTokenAccount",
+      "msg": "Invalid token account owner"
     }
   ],
   "types": [
@@ -681,6 +735,10 @@
             "type": "pubkey"
           },
           {
+            "name": "dividend_epoch",
+            "type": "u64"
+          },
+          {
             "name": "bump",
             "type": "u8"
           }
@@ -715,6 +773,10 @@
           {
             "name": "last_claim_ts",
             "type": "i64"
+          },
+          {
+            "name": "last_claim_epoch",
+            "type": "u64"
           },
           {
             "name": "bump",
@@ -765,6 +827,10 @@
           {
             "name": "tier",
             "type": "u8"
+          },
+          {
+            "name": "last_claim_epoch",
+            "type": "u64"
           },
           {
             "name": "bump",

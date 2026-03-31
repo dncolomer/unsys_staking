@@ -195,9 +195,6 @@ export type UnsysStaking = {
         },
         {
           "name": "tokenProgram"
-        },
-        {
-          "name": "owner"
         }
       ],
       "args": []
@@ -282,6 +279,9 @@ export type UnsysStaking = {
       ],
       "accounts": [
         {
+          "name": "globalConfig"
+        },
+        {
           "name": "dataProviderStake",
           "writable": true
         },
@@ -311,6 +311,46 @@ export type UnsysStaking = {
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "unstakeDataProvider",
+      "discriminator": [
+        209,
+        104,
+        77,
+        28,
+        168,
+        96,
+        48,
+        22
+      ],
+      "accounts": [
+        {
+          "name": "globalConfig",
+          "writable": true
+        },
+        {
+          "name": "dataProviderStake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "userUnsysAta",
+          "writable": true
+        },
+        {
+          "name": "tokenVault",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram"
+        }
+      ],
+      "args": []
     },
     {
       "name": "validateDataProvider",
@@ -355,6 +395,9 @@ export type UnsysStaking = {
       ],
       "accounts": [
         {
+          "name": "globalConfig"
+        },
+        {
           "name": "partnershipStake",
           "writable": true
         },
@@ -376,9 +419,6 @@ export type UnsysStaking = {
         },
         {
           "name": "systemProgram"
-        },
-        {
-          "name": "globalConfig"
         }
       ],
       "args": [
@@ -408,6 +448,10 @@ export type UnsysStaking = {
       ],
       "accounts": [
         {
+          "name": "globalConfig",
+          "writable": true
+        },
+        {
           "name": "partnershipStake",
           "writable": true
         },
@@ -415,10 +459,6 @@ export type UnsysStaking = {
           "name": "user",
           "writable": true,
           "signer": true
-        },
-        {
-          "name": "globalConfig",
-          "writable": true
         },
         {
           "name": "tokenVault",
@@ -453,8 +493,7 @@ export type UnsysStaking = {
       ],
       "accounts": [
         {
-          "name": "globalConfig",
-          "writable": true
+          "name": "globalConfig"
         },
         {
           "name": "userStake",
@@ -493,11 +532,11 @@ export type UnsysStaking = {
       ],
       "accounts": [
         {
-          "name": "globalConfig",
-          "writable": true
+          "name": "globalConfig"
         },
         {
-          "name": "partnershipStake"
+          "name": "partnershipStake",
+          "writable": true
         },
         {
           "name": "user",
@@ -646,6 +685,21 @@ export type UnsysStaking = {
       "code": 6011,
       "name": "invalidVault",
       "msg": "Invalid vault account"
+    },
+    {
+      "code": 6012,
+      "name": "alreadyClaimed",
+      "msg": "Already claimed for this epoch"
+    },
+    {
+      "code": 6013,
+      "name": "invalidAmount",
+      "msg": "Amount must be greater than zero"
+    },
+    {
+      "code": 6014,
+      "name": "invalidTokenAccount",
+      "msg": "Invalid token account owner"
     }
   ],
   "types": [
@@ -687,6 +741,10 @@ export type UnsysStaking = {
             "type": "pubkey"
           },
           {
+            "name": "dividendEpoch",
+            "type": "u64"
+          },
+          {
             "name": "bump",
             "type": "u8"
           }
@@ -721,6 +779,10 @@ export type UnsysStaking = {
           {
             "name": "lastClaimTs",
             "type": "i64"
+          },
+          {
+            "name": "lastClaimEpoch",
+            "type": "u64"
           },
           {
             "name": "bump",
@@ -771,6 +833,10 @@ export type UnsysStaking = {
           {
             "name": "tier",
             "type": "u8"
+          },
+          {
+            "name": "lastClaimEpoch",
+            "type": "u64"
           },
           {
             "name": "bump",
