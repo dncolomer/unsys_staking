@@ -61,6 +61,61 @@
       "args": []
     },
     {
+      "name": "propose_admin_transfer",
+      "discriminator": [
+        218,
+        178,
+        115,
+        190,
+        80,
+        107,
+        95,
+        158
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "new_admin",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "accept_admin_transfer",
+      "discriminator": [
+        89,
+        211,
+        96,
+        212,
+        233,
+        0,
+        251,
+        7
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "new_admin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "deposit_revenue",
       "discriminator": [
         224,
@@ -194,6 +249,84 @@
       "args": []
     },
     {
+      "name": "claim_dividends",
+      "discriminator": [
+        105,
+        60,
+        172,
+        2,
+        136,
+        93,
+        128,
+        151
+      ],
+      "accounts": [
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "user_stake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "revenue_vault",
+          "writable": true
+        },
+        {
+          "name": "user_usdc_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_referral_share",
+      "discriminator": [
+        228,
+        210,
+        199,
+        63,
+        193,
+        255,
+        205,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "partnership_stake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "revenue_vault",
+          "writable": true
+        },
+        {
+          "name": "user_usdc_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "enable_legacy_dividends",
       "discriminator": [
         7,
@@ -241,6 +374,10 @@
         187
       ],
       "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
         {
           "name": "partnership_stake",
           "writable": true
@@ -307,6 +444,34 @@
       ]
     },
     {
+      "name": "deactivate_data_provider",
+      "discriminator": [
+        135,
+        21,
+        125,
+        218,
+        12,
+        126,
+        185,
+        143
+      ],
+      "accounts": [
+        {
+          "name": "global_config"
+        },
+        {
+          "name": "data_provider_stake",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "unstake_data_provider",
       "discriminator": [
         209,
@@ -360,8 +525,7 @@
       ],
       "accounts": [
         {
-          "name": "global_config",
-          "writable": true
+          "name": "global_config"
         },
         {
           "name": "data_provider_stake",
@@ -389,7 +553,8 @@
       ],
       "accounts": [
         {
-          "name": "global_config"
+          "name": "global_config",
+          "writable": true
         },
         {
           "name": "partnership_stake",
@@ -472,84 +637,6 @@
           "type": "u64"
         }
       ]
-    },
-    {
-      "name": "claim_dividends",
-      "discriminator": [
-        105,
-        60,
-        172,
-        2,
-        136,
-        93,
-        128,
-        151
-      ],
-      "accounts": [
-        {
-          "name": "global_config"
-        },
-        {
-          "name": "user_stake",
-          "writable": true
-        },
-        {
-          "name": "user",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "revenue_vault",
-          "writable": true
-        },
-        {
-          "name": "user_usdc_ata",
-          "writable": true
-        },
-        {
-          "name": "token_program"
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "claim_referral_share",
-      "discriminator": [
-        228,
-        210,
-        199,
-        63,
-        193,
-        255,
-        205,
-        166
-      ],
-      "accounts": [
-        {
-          "name": "global_config"
-        },
-        {
-          "name": "partnership_stake",
-          "writable": true
-        },
-        {
-          "name": "user",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "revenue_vault",
-          "writable": true
-        },
-        {
-          "name": "user_usdc_ata",
-          "writable": true
-        },
-        {
-          "name": "token_program"
-        }
-      ],
-      "args": []
     }
   ],
   "accounts": [
@@ -622,78 +709,71 @@
   "errors": [
     {
       "code": 6000,
-      "name": "Unauthorized",
-      "msg": "Unauthorized"
+      "name": "Unauthorized"
     },
     {
       "code": 6001,
-      "name": "InvalidLockPeriod",
-      "msg": "Invalid lock period - use 3, 6 or 12 months"
+      "name": "InvalidLockPeriod"
     },
     {
       "code": 6002,
-      "name": "NoActiveStake",
-      "msg": "No active partnership stake"
+      "name": "NoActiveStake"
     },
     {
       "code": 6003,
-      "name": "InsufficientStake",
-      "msg": "Insufficient staked amount"
+      "name": "InsufficientStake"
     },
     {
       "code": 6004,
-      "name": "InsufficientDataProviderStake",
-      "msg": "Must stake at least 5M $UNSYS for Data Provider"
+      "name": "InsufficientDataProviderStake"
     },
     {
       "code": 6005,
-      "name": "NotLegacyOmega",
-      "msg": "Not a registered Legacy Omega holder"
+      "name": "NotLegacyOmega"
     },
     {
       "code": 6006,
-      "name": "NoRevenueToClaim",
-      "msg": "No revenue available to claim right now"
+      "name": "NoRevenueToClaim"
     },
     {
       "code": 6007,
-      "name": "InsufficientRevenue",
-      "msg": "Not enough USDC in the vault for this claim"
+      "name": "InsufficientRevenue"
     },
     {
       "code": 6008,
-      "name": "AlreadyInitialized",
-      "msg": "Global config already initialized"
+      "name": "AlreadyInitialized"
     },
     {
       "code": 6009,
-      "name": "StakeAlreadyExists",
-      "msg": "Stake already exists for this user"
+      "name": "StakeAlreadyExists"
     },
     {
       "code": 6010,
-      "name": "LockPeriodNotExpired",
-      "msg": "Lock period has not expired yet"
+      "name": "LockPeriodNotExpired"
     },
     {
       "code": 6011,
-      "name": "InvalidVault",
-      "msg": "Invalid vault account"
+      "name": "InvalidVault"
     },
     {
       "code": 6012,
-      "name": "AlreadyClaimed",
-      "msg": "Already claimed for this epoch"
+      "name": "AlreadyClaimed"
     },
     {
       "code": 6013,
-      "name": "InvalidAmount",
-      "msg": "Amount must be greater than zero"
+      "name": "InvalidAmount"
     },
     {
       "code": 6014,
-      "name": "InvalidTokenAccount",
-      "msg": "Invalid token account owner"
+      "name": "InvalidTokenAccount"
+    },
+    {
+      "code": 6015,
+      "name": "MustDeactivateFirst"
+    },
+    {
+      "code": 6016,
+      "name": "NotActive"
     }
   ],
   "types": [
@@ -731,11 +811,27 @@
             "type": "pubkey"
           },
           {
+            "name": "pending_admin",
+            "type": "pubkey"
+          },
+          {
             "name": "buyback_wallet",
             "type": "pubkey"
           },
           {
             "name": "dividend_epoch",
+            "type": "u64"
+          },
+          {
+            "name": "epoch_dividend_pool",
+            "type": "u64"
+          },
+          {
+            "name": "epoch_referral_pool",
+            "type": "u64"
+          },
+          {
+            "name": "total_active_partners",
             "type": "u64"
           },
           {

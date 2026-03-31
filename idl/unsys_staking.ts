@@ -67,6 +67,61 @@ export type UnsysStaking = {
       "args": []
     },
     {
+      "name": "proposeAdminTransfer",
+      "discriminator": [
+        218,
+        178,
+        115,
+        190,
+        80,
+        107,
+        95,
+        158
+      ],
+      "accounts": [
+        {
+          "name": "globalConfig",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "newAdmin",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "acceptAdminTransfer",
+      "discriminator": [
+        89,
+        211,
+        96,
+        212,
+        233,
+        0,
+        251,
+        7
+      ],
+      "accounts": [
+        {
+          "name": "globalConfig",
+          "writable": true
+        },
+        {
+          "name": "newAdmin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "depositRevenue",
       "discriminator": [
         224,
@@ -200,6 +255,84 @@ export type UnsysStaking = {
       "args": []
     },
     {
+      "name": "claimDividends",
+      "discriminator": [
+        105,
+        60,
+        172,
+        2,
+        136,
+        93,
+        128,
+        151
+      ],
+      "accounts": [
+        {
+          "name": "globalConfig"
+        },
+        {
+          "name": "userStake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "revenueVault",
+          "writable": true
+        },
+        {
+          "name": "userUsdcAta",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claimReferralShare",
+      "discriminator": [
+        228,
+        210,
+        199,
+        63,
+        193,
+        255,
+        205,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "globalConfig"
+        },
+        {
+          "name": "partnershipStake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "revenueVault",
+          "writable": true
+        },
+        {
+          "name": "userUsdcAta",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "enableLegacyDividends",
       "discriminator": [
         7,
@@ -247,6 +380,10 @@ export type UnsysStaking = {
         187
       ],
       "accounts": [
+        {
+          "name": "globalConfig",
+          "writable": true
+        },
         {
           "name": "partnershipStake",
           "writable": true
@@ -313,6 +450,34 @@ export type UnsysStaking = {
       ]
     },
     {
+      "name": "deactivateDataProvider",
+      "discriminator": [
+        135,
+        21,
+        125,
+        218,
+        12,
+        126,
+        185,
+        143
+      ],
+      "accounts": [
+        {
+          "name": "globalConfig"
+        },
+        {
+          "name": "dataProviderStake",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "unstakeDataProvider",
       "discriminator": [
         209,
@@ -366,8 +531,7 @@ export type UnsysStaking = {
       ],
       "accounts": [
         {
-          "name": "globalConfig",
-          "writable": true
+          "name": "globalConfig"
         },
         {
           "name": "dataProviderStake",
@@ -395,7 +559,8 @@ export type UnsysStaking = {
       ],
       "accounts": [
         {
-          "name": "globalConfig"
+          "name": "globalConfig",
+          "writable": true
         },
         {
           "name": "partnershipStake",
@@ -478,84 +643,6 @@ export type UnsysStaking = {
           "type": "u64"
         }
       ]
-    },
-    {
-      "name": "claimDividends",
-      "discriminator": [
-        105,
-        60,
-        172,
-        2,
-        136,
-        93,
-        128,
-        151
-      ],
-      "accounts": [
-        {
-          "name": "globalConfig"
-        },
-        {
-          "name": "userStake",
-          "writable": true
-        },
-        {
-          "name": "user",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "revenueVault",
-          "writable": true
-        },
-        {
-          "name": "userUsdcAta",
-          "writable": true
-        },
-        {
-          "name": "tokenProgram"
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "claimReferralShare",
-      "discriminator": [
-        228,
-        210,
-        199,
-        63,
-        193,
-        255,
-        205,
-        166
-      ],
-      "accounts": [
-        {
-          "name": "globalConfig"
-        },
-        {
-          "name": "partnershipStake",
-          "writable": true
-        },
-        {
-          "name": "user",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "revenueVault",
-          "writable": true
-        },
-        {
-          "name": "userUsdcAta",
-          "writable": true
-        },
-        {
-          "name": "tokenProgram"
-        }
-      ],
-      "args": []
     }
   ],
   "accounts": [
@@ -628,78 +715,71 @@ export type UnsysStaking = {
   "errors": [
     {
       "code": 6000,
-      "name": "unauthorized",
-      "msg": "unauthorized"
+      "name": "unauthorized"
     },
     {
       "code": 6001,
-      "name": "invalidLockPeriod",
-      "msg": "Invalid lock period - use 3, 6 or 12 months"
+      "name": "invalidLockPeriod"
     },
     {
       "code": 6002,
-      "name": "noActiveStake",
-      "msg": "No active partnership stake"
+      "name": "noActiveStake"
     },
     {
       "code": 6003,
-      "name": "insufficientStake",
-      "msg": "Insufficient staked amount"
+      "name": "insufficientStake"
     },
     {
       "code": 6004,
-      "name": "insufficientDataProviderStake",
-      "msg": "Must stake at least 5M $UNSYS for Data Provider"
+      "name": "insufficientDataProviderStake"
     },
     {
       "code": 6005,
-      "name": "notLegacyOmega",
-      "msg": "Not a registered Legacy Omega holder"
+      "name": "notLegacyOmega"
     },
     {
       "code": 6006,
-      "name": "noRevenueToClaim",
-      "msg": "No revenue available to claim right now"
+      "name": "noRevenueToClaim"
     },
     {
       "code": 6007,
-      "name": "insufficientRevenue",
-      "msg": "Not enough USDC in the vault for this claim"
+      "name": "insufficientRevenue"
     },
     {
       "code": 6008,
-      "name": "alreadyInitialized",
-      "msg": "Global config already initialized"
+      "name": "alreadyInitialized"
     },
     {
       "code": 6009,
-      "name": "stakeAlreadyExists",
-      "msg": "Stake already exists for this user"
+      "name": "stakeAlreadyExists"
     },
     {
       "code": 6010,
-      "name": "lockPeriodNotExpired",
-      "msg": "Lock period has not expired yet"
+      "name": "lockPeriodNotExpired"
     },
     {
       "code": 6011,
-      "name": "invalidVault",
-      "msg": "Invalid vault account"
+      "name": "invalidVault"
     },
     {
       "code": 6012,
-      "name": "alreadyClaimed",
-      "msg": "Already claimed for this epoch"
+      "name": "alreadyClaimed"
     },
     {
       "code": 6013,
-      "name": "invalidAmount",
-      "msg": "Amount must be greater than zero"
+      "name": "invalidAmount"
     },
     {
       "code": 6014,
-      "name": "invalidTokenAccount",
-      "msg": "Invalid token account owner"
+      "name": "invalidTokenAccount"
+    },
+    {
+      "code": 6015,
+      "name": "mustDeactivateFirst"
+    },
+    {
+      "code": 6016,
+      "name": "notActive"
     }
   ],
   "types": [
@@ -737,11 +817,27 @@ export type UnsysStaking = {
             "type": "pubkey"
           },
           {
+            "name": "pendingAdmin",
+            "type": "pubkey"
+          },
+          {
             "name": "buybackWallet",
             "type": "pubkey"
           },
           {
             "name": "dividendEpoch",
+            "type": "u64"
+          },
+          {
+            "name": "epochDividendPool",
+            "type": "u64"
+          },
+          {
+            "name": "epochReferralPool",
+            "type": "u64"
+          },
+          {
+            "name": "totalActivePartners",
             "type": "u64"
           },
           {
