@@ -1,0 +1,801 @@
+{
+  "address": "8fQT7WjAw2BLYJcbTPYxLciPmUgh5GS4Jj2Vo1uhoK2q",
+  "metadata": {
+    "name": "unsys_staking",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "unsys_mint"
+        },
+        {
+          "name": "omega_mint"
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "buyback_wallet"
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "revenue_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program"
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "deposit_revenue",
+      "discriminator": [
+        224,
+        212,
+        82,
+        100,
+        60,
+        240,
+        220,
+        29
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "admin_usdc_ata",
+          "writable": true
+        },
+        {
+          "name": "revenue_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "stake_dividends",
+      "discriminator": [
+        161,
+        224,
+        5,
+        30,
+        92,
+        103,
+        47,
+        69
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "user_stake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user_unsys_ata",
+          "writable": true
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "lock_months",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "unstake_dividends",
+      "discriminator": [
+        211,
+        193,
+        244,
+        125,
+        100,
+        133,
+        32,
+        55
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "user_stake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user_unsys_ata",
+          "writable": true
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "owner"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "enable_legacy_dividends",
+      "discriminator": [
+        7,
+        179,
+        209,
+        21,
+        177,
+        34,
+        200,
+        10
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "dividend_stake",
+          "writable": true
+        },
+        {
+          "name": "legacy_omega_stake"
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "enable_legacy_partnership",
+      "discriminator": [
+        103,
+        67,
+        131,
+        165,
+        119,
+        25,
+        195,
+        187
+      ],
+      "accounts": [
+        {
+          "name": "partnership_stake",
+          "writable": true
+        },
+        {
+          "name": "legacy_omega_stake"
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "stake_data_provider",
+      "discriminator": [
+        239,
+        111,
+        156,
+        41,
+        135,
+        169,
+        76,
+        82
+      ],
+      "accounts": [
+        {
+          "name": "data_provider_stake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user_unsys_ata",
+          "writable": true
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "validate_data_provider",
+      "discriminator": [
+        193,
+        171,
+        197,
+        72,
+        10,
+        192,
+        166,
+        88
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "data_provider_stake",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "stake_partnership",
+      "discriminator": [
+        128,
+        9,
+        210,
+        114,
+        118,
+        244,
+        25,
+        115
+      ],
+      "accounts": [
+        {
+          "name": "partnership_stake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user_unsys_ata",
+          "writable": true
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program"
+        },
+        {
+          "name": "global_config"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "referrer",
+          "type": {
+            "option": "pubkey"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unstake_partnership",
+      "discriminator": [
+        139,
+        64,
+        29,
+        175,
+        154,
+        5,
+        133,
+        158
+      ],
+      "accounts": [
+        {
+          "name": "partnership_stake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "token_vault",
+          "writable": true
+        },
+        {
+          "name": "user_unsys_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_to_unstake",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "claim_dividends",
+      "discriminator": [
+        105,
+        60,
+        172,
+        2,
+        136,
+        93,
+        128,
+        151
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "user_stake",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "revenue_vault",
+          "writable": true
+        },
+        {
+          "name": "user_usdc_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_referral_share",
+      "discriminator": [
+        228,
+        210,
+        199,
+        63,
+        193,
+        255,
+        205,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "partnership_stake"
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "revenue_vault",
+          "writable": true
+        },
+        {
+          "name": "user_usdc_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "GlobalConfig",
+      "discriminator": [
+        149,
+        8,
+        156,
+        202,
+        160,
+        252,
+        176,
+        217
+      ]
+    },
+    {
+      "name": "DividendStake",
+      "discriminator": [
+        247,
+        97,
+        181,
+        177,
+        124,
+        29,
+        208,
+        57
+      ]
+    },
+    {
+      "name": "LegacyOmegaStake",
+      "discriminator": [
+        251,
+        163,
+        19,
+        43,
+        187,
+        20,
+        79,
+        202
+      ]
+    },
+    {
+      "name": "PartnershipStake",
+      "discriminator": [
+        158,
+        28,
+        164,
+        191,
+        248,
+        74,
+        81,
+        97
+      ]
+    },
+    {
+      "name": "DataProviderStake",
+      "discriminator": [
+        73,
+        63,
+        159,
+        49,
+        65,
+        62,
+        238,
+        95
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidLockPeriod",
+      "msg": "Invalid lock period - use 3, 6 or 12 months"
+    },
+    {
+      "code": 6002,
+      "name": "NoActiveStake",
+      "msg": "No active partnership stake"
+    },
+    {
+      "code": 6003,
+      "name": "InsufficientStake",
+      "msg": "Insufficient staked amount"
+    },
+    {
+      "code": 6004,
+      "name": "InsufficientDataProviderStake",
+      "msg": "Must stake at least 5M $UNSYS for Data Provider"
+    },
+    {
+      "code": 6005,
+      "name": "NotLegacyOmega",
+      "msg": "Not a registered Legacy Omega holder"
+    },
+    {
+      "code": 6006,
+      "name": "NoRevenueToClaim",
+      "msg": "No revenue available to claim right now"
+    },
+    {
+      "code": 6007,
+      "name": "InsufficientRevenue",
+      "msg": "Not enough USDC in the vault for this claim"
+    },
+    {
+      "code": 6008,
+      "name": "AlreadyInitialized",
+      "msg": "Global config already initialized"
+    },
+    {
+      "code": 6009,
+      "name": "StakeAlreadyExists",
+      "msg": "Stake already exists for this user"
+    },
+    {
+      "code": 6010,
+      "name": "LockPeriodNotExpired",
+      "msg": "Lock period has not expired yet"
+    },
+    {
+      "code": 6011,
+      "name": "InvalidVault",
+      "msg": "Invalid vault account"
+    }
+  ],
+  "types": [
+    {
+      "name": "GlobalConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "unsys_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "omega_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "usdc_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "revenue_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_dividend_shares",
+            "type": "u128"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "buyback_wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DividendStake",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "shares",
+            "type": "u128"
+          },
+          {
+            "name": "lock_end",
+            "type": "i64"
+          },
+          {
+            "name": "multiplier_bps",
+            "type": "u16"
+          },
+          {
+            "name": "last_claim_ts",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LegacyOmegaStake",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "registered",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PartnershipStake",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "staked_amount",
+            "type": "u64"
+          },
+          {
+            "name": "referrer",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "tier",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DataProviderStake",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "staked_amount",
+            "type": "u64"
+          },
+          {
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}
