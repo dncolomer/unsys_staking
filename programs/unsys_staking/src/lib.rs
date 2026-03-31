@@ -7,7 +7,7 @@ use anchor_spl::{
 declare_id!("8fQT7WjAw2BLYJcbTPYxLciPmUgh5GS4Jj2Vo1uhoK2q");
 
 // ============================================================
-// Events (for off-chain indexing)
+// Events
 // ============================================================
 
 #[event]
@@ -26,7 +26,7 @@ pub struct RevenueDeposited {
 }
 
 #[event]
-pub struct DividendStaked {
+pub struct DividendStakedEvent {
     pub user: Pubkey,
     pub amount: u64,
     pub lock_months: u8,
@@ -35,58 +35,58 @@ pub struct DividendStaked {
 }
 
 #[event]
-pub struct DividendUnstaked {
+pub struct DividendUnstakedEvent {
     pub user: Pubkey,
     pub amount: u64,
 }
 
 #[event]
-pub struct DividendClaimed {
+pub struct DividendClaimedEvent {
     pub user: Pubkey,
     pub amount: u64,
     pub epoch: u64,
 }
 
 #[event]
-pub struct PartnershipStaked {
+pub struct PartnershipStakedEvent {
     pub user: Pubkey,
     pub amount: u64,
     pub referrer: Option<Pubkey>,
 }
 
 #[event]
-pub struct PartnershipUnstaked {
+pub struct PartnershipUnstakedEvent {
     pub user: Pubkey,
     pub amount: u64,
     pub fully_unstaked: bool,
 }
 
 #[event]
-pub struct ReferralShareClaimed {
+pub struct ReferralShareClaimedEvent {
     pub user: Pubkey,
     pub amount: u64,
     pub epoch: u64,
 }
 
 #[event]
-pub struct DataProviderStaked {
+pub struct DataProviderStakedEvent {
     pub user: Pubkey,
     pub amount: u64,
 }
 
 #[event]
-pub struct DataProviderUnstaked {
+pub struct DataProviderUnstakedEvent {
     pub user: Pubkey,
     pub amount: u64,
 }
 
 #[event]
-pub struct DataProviderValidated {
+pub struct DataProviderValidatedEvent {
     pub user: Pubkey,
 }
 
 #[event]
-pub struct DataProviderDeactivated {
+pub struct DataProviderDeactivatedEvent {
     pub user: Pubkey,
 }
 
@@ -100,6 +100,23 @@ pub struct AdminTransferProposed {
 pub struct AdminTransferAccepted {
     pub old_admin: Pubkey,
     pub new_admin: Pubkey,
+}
+
+#[event]
+pub struct AdminTransferCancelled {
+    pub admin: Pubkey,
+}
+
+#[event]
+pub struct LegacyDividendsEnabled {
+    pub user: Pubkey,
+    pub shares: u128,
+}
+
+#[event]
+pub struct LegacyPartnershipEnabled {
+    pub user: Pubkey,
+    pub tier: u8,
 }
 
 #[program]
@@ -118,6 +135,27 @@ pub mod unsys_staking {
             config.admin == Pubkey::default(),
             ErrorCode::AlreadyInitialized
         );
+
+        // Validate vault mints match the declared mints
+        require!(
+            ctx.accounts.token_vault.mint == ctx.accounts.unsys_mint.key(),
+            ErrorCode::InvalidVault
+        );
+        require!(
+            ctx.accounts.revenue_vault.mint == ctx.accounts.usdc_mint.key(),
+            ErrorCode::InvalidVault
+        );
+        // Validate vault authorities are the GlobalConfig PDA
+        let global_config_key = config.key();
+        require!(
+            ctx.accounts.token_vault.owner == global_config_key,
+            ErrorCode::InvalidVault
+        );
+        require!(
+            ctx.accounts.revenue_vault.owner == global_config_key,
+            ErrorCode::InvalidVault
+        );
+
         config.unsys_mint = ctx.accounts.unsys_mint.key();
         config.omega_mint = ctx.accounts.omega_mint.key();
         config.usdc_mint = ctx.accounts.usdc_mint.key();
@@ -156,7 +194,7 @@ pub mod unsys_staking {
         );
         require!(
             new_admin != Pubkey::default(),
-            ErrorCode::InvalidAmount // reuse: new admin can't be default
+            ErrorCode::InvalidAdmin
         );
 
         config.pending_admin = new_admin;
@@ -191,8 +229,26 @@ pub mod unsys_staking {
         Ok(())
     }
 
+    pub fn cancel_admin_transfer(ctx: Context<ProposeAdminTransfer>) -> Result<()> {
+        let config = &mut ctx.accounts.global_config;
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            config.admin,
+            ErrorCode::Unauthorized
+        );
+
+        config.pending_admin = Pubkey::default();
+
+        emit!(AdminTransferCancelled {
+            admin: config.admin,
+        });
+
+        msg!("Admin transfer cancelled");
+        Ok(())
+    }
+
     // ----------------------------------------------------------------
-    // Revenue deposit with snapshot
+    // Revenue deposit with snapshot (accumulating)
     // ----------------------------------------------------------------
 
     pub fn deposit_revenue(ctx: Context<DepositRevenue>, amount: u64) -> Result<()> {
@@ -213,7 +269,7 @@ pub mod unsys_staking {
 
         let config = &mut ctx.accounts.global_config;
 
-        // Snapshot: split deposit into dividend pool and referral pool
+        // Split deposit into dividend pool and referral pool
         let referral_amount = amount
             .checked_mul(REFERRAL_POOL_BPS)
             .unwrap()
@@ -221,20 +277,27 @@ pub mod unsys_staking {
             .unwrap();
         let dividend_amount = amount.checked_sub(referral_amount).unwrap();
 
-        config.epoch_dividend_pool = dividend_amount;
-        config.epoch_referral_pool = referral_amount;
-        config.dividend_epoch += 1;
+        // Accumulate: unclaimed funds from prior epochs roll forward
+        config.epoch_dividend_pool = config
+            .epoch_dividend_pool
+            .checked_add(dividend_amount)
+            .unwrap();
+        config.epoch_referral_pool = config
+            .epoch_referral_pool
+            .checked_add(referral_amount)
+            .unwrap();
+        config.dividend_epoch = config.dividend_epoch.checked_add(1).unwrap();
 
         emit!(RevenueDeposited {
             amount,
             epoch: config.dividend_epoch,
-            epoch_dividend_pool: dividend_amount,
-            epoch_referral_pool: referral_amount,
+            epoch_dividend_pool: config.epoch_dividend_pool,
+            epoch_referral_pool: config.epoch_referral_pool,
         });
 
         msg!(
             "Deposited {} USDC (epoch {}, div_pool={}, ref_pool={})",
-            amount, config.dividend_epoch, dividend_amount, referral_amount
+            amount, config.dividend_epoch, config.epoch_dividend_pool, config.epoch_referral_pool
         );
         Ok(())
     }
@@ -280,9 +343,14 @@ pub mod unsys_staking {
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
         token::transfer(cpi_ctx, amount)?;
 
-        ctx.accounts.global_config.total_dividend_shares += shares;
+        ctx.accounts.global_config.total_dividend_shares = ctx
+            .accounts
+            .global_config
+            .total_dividend_shares
+            .checked_add(shares)
+            .unwrap();
 
-        emit!(DividendStaked {
+        emit!(DividendStakedEvent {
             user: ctx.accounts.user.key(),
             amount,
             lock_months,
@@ -334,7 +402,7 @@ pub mod unsys_staking {
             .total_dividend_shares
             .saturating_sub(shares);
 
-        emit!(DividendUnstaked {
+        emit!(DividendUnstakedEvent {
             user: ctx.accounts.user.key(),
             amount,
         });
@@ -350,6 +418,9 @@ pub mod unsys_staking {
     pub fn claim_dividends(ctx: Context<ClaimDividends>) -> Result<()> {
         let stake = &mut ctx.accounts.user_stake;
         let config = &ctx.accounts.global_config;
+
+        // Early exit if no active stake (e.g. after unstake)
+        require!(stake.shares > 0, ErrorCode::NoActiveStake);
 
         require!(
             stake.last_claim_epoch < config.dividend_epoch,
@@ -389,7 +460,7 @@ pub mod unsys_staking {
         stake.last_claim_ts = Clock::get()?.unix_timestamp;
         stake.last_claim_epoch = config.dividend_epoch;
 
-        emit!(DividendClaimed {
+        emit!(DividendClaimedEvent {
             user: ctx.accounts.user.key(),
             amount: user_reward,
             epoch: config.dividend_epoch,
@@ -420,6 +491,7 @@ pub mod unsys_staking {
         require!(pool > 0, ErrorCode::NoRevenueToClaim);
 
         // Divide referral pool equally among active partners
+        // Note: integer division truncates; dust remains in vault (standard on-chain behavior)
         let total_partners = config.total_active_partners;
         require!(total_partners > 0, ErrorCode::NoRevenueToClaim);
 
@@ -446,7 +518,7 @@ pub mod unsys_staking {
 
         partnership.last_claim_epoch = config.dividend_epoch;
 
-        emit!(ReferralShareClaimed {
+        emit!(ReferralShareClaimedEvent {
             user: ctx.accounts.user.key(),
             amount,
             epoch: config.dividend_epoch,
@@ -483,7 +555,18 @@ pub mod unsys_staking {
         stake.last_claim_epoch = ctx.accounts.global_config.dividend_epoch;
         stake.bump = ctx.bumps.dividend_stake;
 
-        ctx.accounts.global_config.total_dividend_shares += BASE_LEGACY_SHARES;
+        ctx.accounts.global_config.total_dividend_shares = ctx
+            .accounts
+            .global_config
+            .total_dividend_shares
+            .checked_add(BASE_LEGACY_SHARES)
+            .unwrap();
+
+        emit!(LegacyDividendsEnabled {
+            user: ctx.accounts.user.key(),
+            shares: BASE_LEGACY_SHARES,
+        });
+
         msg!("Legacy Omega now earns passive dividends");
         Ok(())
     }
@@ -508,8 +591,17 @@ pub mod unsys_staking {
         stake.last_claim_epoch = ctx.accounts.global_config.dividend_epoch;
         stake.bump = ctx.bumps.partnership_stake;
 
-        // Legacy partners count as active partners for referral pool split
-        ctx.accounts.global_config.total_active_partners += 1;
+        ctx.accounts.global_config.total_active_partners = ctx
+            .accounts
+            .global_config
+            .total_active_partners
+            .checked_add(1)
+            .unwrap();
+
+        emit!(LegacyPartnershipEnabled {
+            user: ctx.accounts.user.key(),
+            tier: 2,
+        });
 
         msg!("Legacy Omega now has 30% referral tier");
         Ok(())
@@ -542,7 +634,7 @@ pub mod unsys_staking {
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
         token::transfer(cpi_ctx, amount)?;
 
-        emit!(DataProviderStaked {
+        emit!(DataProviderStakedEvent {
             user: ctx.accounts.user.key(),
             amount,
         });
@@ -564,7 +656,7 @@ pub mod unsys_staking {
 
         ctx.accounts.data_provider_stake.active = false;
 
-        emit!(DataProviderDeactivated {
+        emit!(DataProviderDeactivatedEvent {
             user: ctx.accounts.data_provider_stake.owner,
         });
 
@@ -575,7 +667,6 @@ pub mod unsys_staking {
     pub fn unstake_data_provider(ctx: Context<UnstakeDataProvider>) -> Result<()> {
         let stake = &mut ctx.accounts.data_provider_stake;
         require!(stake.staked_amount > 0, ErrorCode::NoActiveStake);
-        // Must be deactivated before unstaking
         require!(!stake.active, ErrorCode::MustDeactivateFirst);
 
         let amount = stake.staked_amount;
@@ -599,7 +690,7 @@ pub mod unsys_staking {
         stake.staked_amount = 0;
         stake.active = false;
 
-        emit!(DataProviderUnstaked {
+        emit!(DataProviderUnstakedEvent {
             user: ctx.accounts.user.key(),
             amount,
         });
@@ -616,7 +707,7 @@ pub mod unsys_staking {
         );
         ctx.accounts.data_provider_stake.active = true;
 
-        emit!(DataProviderValidated {
+        emit!(DataProviderValidatedEvent {
             user: ctx.accounts.data_provider_stake.owner,
         });
 
@@ -653,10 +744,14 @@ pub mod unsys_staking {
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
         token::transfer(cpi_ctx, amount)?;
 
-        // Track active partners for referral pool split
-        ctx.accounts.global_config.total_active_partners += 1;
+        ctx.accounts.global_config.total_active_partners = ctx
+            .accounts
+            .global_config
+            .total_active_partners
+            .checked_add(1)
+            .unwrap();
 
-        emit!(PartnershipStaked {
+        emit!(PartnershipStakedEvent {
             user: ctx.accounts.user.key(),
             amount,
             referrer,
@@ -698,7 +793,6 @@ pub mod unsys_staking {
 
         let fully_unstaked = stake.staked_amount == 0;
         if fully_unstaked && stake.tier != 2 {
-            // tier-2 (legacy) partners keep their status even at 0 staked
             stake.tier = 0;
             ctx.accounts.global_config.total_active_partners = ctx
                 .accounts
@@ -708,7 +802,7 @@ pub mod unsys_staking {
             msg!("Fully unstaked - partner status REVOKED");
         }
 
-        emit!(PartnershipUnstaked {
+        emit!(PartnershipUnstakedEvent {
             user: ctx.accounts.user.key(),
             amount: amount_to_unstake,
             fully_unstaked,
@@ -1048,7 +1142,8 @@ pub struct ClaimDividends<'info> {
     pub revenue_vault: Account<'info, TokenAccount>,
     #[account(
         mut,
-        constraint = user_usdc_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount
+        constraint = user_usdc_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
+        constraint = user_usdc_ata.mint == global_config.usdc_mint @ ErrorCode::InvalidTokenAccount
     )]
     pub user_usdc_ata: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
@@ -1077,7 +1172,8 @@ pub struct ClaimReferralShare<'info> {
     pub revenue_vault: Account<'info, TokenAccount>,
     #[account(
         mut,
-        constraint = user_usdc_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount
+        constraint = user_usdc_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
+        constraint = user_usdc_ata.mint == global_config.usdc_mint @ ErrorCode::InvalidTokenAccount
     )]
     pub user_usdc_ata: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
@@ -1182,4 +1278,6 @@ pub enum ErrorCode {
     MustDeactivateFirst,
     #[msg("Data provider is not currently active")]
     NotActive,
+    #[msg("New admin cannot be the zero address")]
+    InvalidAdmin,
 }

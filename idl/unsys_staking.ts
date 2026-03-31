@@ -122,6 +122,31 @@ export type UnsysStaking = {
       "args": []
     },
     {
+      "name": "cancelAdminTransfer",
+      "discriminator": [
+        38,
+        131,
+        157,
+        31,
+        240,
+        137,
+        44,
+        215
+      ],
+      "accounts": [
+        {
+          "name": "globalConfig",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "depositRevenue",
       "discriminator": [
         224,
@@ -780,6 +805,10 @@ export type UnsysStaking = {
     {
       "code": 6016,
       "name": "notActive"
+    },
+    {
+      "code": 6017,
+      "name": "invalidAdmin"
     }
   ],
   "types": [

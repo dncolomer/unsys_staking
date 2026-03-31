@@ -116,6 +116,31 @@
       "args": []
     },
     {
+      "name": "cancel_admin_transfer",
+      "discriminator": [
+        38,
+        131,
+        157,
+        31,
+        240,
+        137,
+        44,
+        215
+      ],
+      "accounts": [
+        {
+          "name": "global_config",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "deposit_revenue",
       "discriminator": [
         224,
@@ -774,6 +799,10 @@
     {
       "code": 6016,
       "name": "NotActive"
+    },
+    {
+      "code": 6017,
+      "name": "InvalidAdmin"
     }
   ],
   "types": [
