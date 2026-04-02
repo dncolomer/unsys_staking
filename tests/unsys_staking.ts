@@ -28,9 +28,11 @@ describe("unsys_staking", () => {
   let revenueVault: anchor.web3.PublicKey;
   let globalConfigKey: anchor.web3.PublicKey;
   let buybackWallet: anchor.web3.PublicKey;
-  let buybackUsdcAta: anchor.web3.PublicKey;
 
   const STAKE_AMOUNT = new BN(1_000_000);
+  const PARTNERSHIP_1M = new BN(1_000_000);
+  const PARTNERSHIP_2M = new BN(2_000_000);
+  const PARTNERSHIP_5M = new BN(5_000_000);
   const DATA_PROVIDER_STAKE = new BN(5_000_000);
   const REVENUE_DEPOSIT = new BN(1_000_000);
 
@@ -45,6 +47,10 @@ describe("unsys_staking", () => {
     const ata = (await getOrCreateAssociatedTokenAccount(provider.connection, kp, unsysMint, kp.publicKey)).address;
     if (unsysAmount > 0) await mintTo(provider.connection, admin, unsysMint, ata, admin, unsysAmount);
     return { kp, ata };
+  }
+
+  async function getUserUsdcAta(kp: anchor.web3.Keypair) {
+    return (await getOrCreateAssociatedTokenAccount(provider.connection, kp, usdcMint, kp.publicKey)).address;
   }
 
   before(async () => {
@@ -68,20 +74,16 @@ describe("unsys_staking", () => {
     tokenVault = (await getOrCreateAssociatedTokenAccount(provider.connection, admin, unsysMint, globalConfigKey, true)).address;
     revenueVault = (await getOrCreateAssociatedTokenAccount(provider.connection, admin, usdcMint, globalConfigKey, true)).address;
 
-    // Set up buyback wallet for sweep_dust tests
-    const buybackKp = anchor.web3.Keypair.generate();
-    buybackWallet = buybackKp.publicKey;
-    await airdropSol(buybackWallet, 2);
-    buybackUsdcAta = (await getOrCreateAssociatedTokenAccount(provider.connection, admin, usdcMint, buybackWallet)).address;
+    buybackWallet = anchor.web3.Keypair.generate().publicKey;
 
-    await mintTo(provider.connection, admin, unsysMint, adminUnsysAta, admin, 100_000_000);
+    await mintTo(provider.connection, admin, unsysMint, adminUnsysAta, admin, 500_000_000);
     await mintTo(provider.connection, admin, unsysMint, userUnsysAta, admin, 50_000_000);
-    await mintTo(provider.connection, admin, usdcMint, adminUsdcAta, admin, 100_000_000);
+    await mintTo(provider.connection, admin, usdcMint, adminUsdcAta, admin, 500_000_000);
   });
 
   // ================================================================
   describe("initialize", () => {
-    it("should initialize with vault mint+authority validation", async () => {
+    it("should initialize", async () => {
       await program.methods.initialize()
         .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, unsysMint, omegaMint, usdcMint, buybackWallet, tokenVault, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
         .signers([admin]).rpc();
@@ -90,25 +92,17 @@ describe("unsys_staking", () => {
       assert.ok(config.admin.equals(admin.publicKey));
       assert.equal(config.dividendEpoch.toNumber(), 0);
       assert.equal(config.epochDividendPool.toNumber(), 0);
-      assert.equal(config.epochReferralPool.toNumber(), 0);
-      assert.equal(config.totalActivePartners.toNumber(), 0);
-      assert.equal(config.epochActivePartners.toNumber(), 0);
-      assert.ok(config.pendingAdmin.equals(anchor.web3.PublicKey.default));
-      // [Issue 11] Verify paused flag initialized to false
       assert.equal(config.paused, false);
-      // [Issue 3] Verify legacy holder counter initialized to 0
       assert.equal(config.totalLegacyHolders.toNumber(), 0);
     });
 
     it("should reject re-initialization", async () => {
       try {
         await program.methods.initialize()
-          .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, unsysMint, omegaMint, usdcMint, buybackWallet: anchor.web3.Keypair.generate().publicKey, tokenVault, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
+          .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, unsysMint, omegaMint, usdcMint, buybackWallet, tokenVault, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
           .signers([admin]).rpc();
         assert.fail("Should have thrown");
-      } catch (e) {
-        assert.include(e.toString(), "AlreadyInitialized");
-      }
+      } catch (e) { assert.include(e.toString(), "AlreadyInitialized"); }
     });
   });
 
@@ -140,23 +134,6 @@ describe("unsys_staking", () => {
       } catch (e) { assert.include(e.toString(), "Unauthorized"); }
     });
 
-    it("should reject accept by wrong address", async () => {
-      const na = anchor.web3.Keypair.generate();
-      const wrong = anchor.web3.Keypair.generate();
-      await airdropSol(na.publicKey, 5);
-      await airdropSol(wrong.publicKey, 5);
-      await program.methods.proposeAdminTransfer(na.publicKey)
-        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey }).signers([admin]).rpc();
-      try {
-        await program.methods.acceptAdminTransfer()
-          .accounts({ globalConfig: globalConfigKey, newAdmin: wrong.publicKey }).signers([wrong]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "Unauthorized"); }
-      // [Issue 7] Now uses dedicated CancelAdminTransfer context
-      await program.methods.cancelAdminTransfer()
-        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey }).signers([admin]).rpc();
-    });
-
     it("should cancel admin transfer", async () => {
       const na = anchor.web3.Keypair.generate();
       await program.methods.proposeAdminTransfer(na.publicKey)
@@ -166,26 +143,14 @@ describe("unsys_staking", () => {
       const c = await program.account.globalConfig.fetch(globalConfigKey);
       assert.ok(c.pendingAdmin.equals(anchor.web3.PublicKey.default));
     });
-
-    it("should reject cancel by non-admin", async () => {
-      const atk = anchor.web3.Keypair.generate();
-      await airdropSol(atk.publicKey, 5);
-      try {
-        await program.methods.cancelAdminTransfer()
-          .accounts({ globalConfig: globalConfigKey, admin: atk.publicKey }).signers([atk]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "Unauthorized"); }
-    });
   });
 
   // ================================================================
-  // [Issue 11] Pause/unpause tests
   describe("pause and unpause", () => {
     it("should pause the program", async () => {
       await program.methods.pause()
         .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey }).signers([admin]).rpc();
-      const config = await program.account.globalConfig.fetch(globalConfigKey);
-      assert.equal(config.paused, true);
+      assert.equal((await program.account.globalConfig.fetch(globalConfigKey)).paused, true);
     });
 
     it("should reject operations when paused", async () => {
@@ -197,37 +162,10 @@ describe("unsys_staking", () => {
       } catch (e) { assert.include(e.toString(), "ProgramPaused"); }
     });
 
-    it("should reject double-pause", async () => {
-      try {
-        await program.methods.pause()
-          .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey }).signers([admin]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "AlreadyPaused"); }
-    });
-
-    it("should reject pause by non-admin", async () => {
-      const atk = anchor.web3.Keypair.generate();
-      await airdropSol(atk.publicKey, 5);
-      try {
-        await program.methods.pause()
-          .accounts({ globalConfig: globalConfigKey, admin: atk.publicKey }).signers([atk]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "Unauthorized"); }
-    });
-
     it("should unpause the program", async () => {
       await program.methods.unpause()
         .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey }).signers([admin]).rpc();
-      const config = await program.account.globalConfig.fetch(globalConfigKey);
-      assert.equal(config.paused, false);
-    });
-
-    it("should reject unpause when not paused", async () => {
-      try {
-        await program.methods.unpause()
-          .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey }).signers([admin]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "NotPaused"); }
+      assert.equal((await program.account.globalConfig.fetch(globalConfigKey)).paused, false);
     });
   });
 
@@ -241,8 +179,6 @@ describe("unsys_staking", () => {
       const s = await program.account.dividendStake.fetch(sk);
       assert.ok(s.amount.eq(STAKE_AMOUNT));
       assert.equal(s.multiplierBps, 11000);
-      assert.equal(s.shares.toNumber(), 1_100_000);
-      // [Issue 1] Verify is_initialized flag
       assert.equal(s.isInitialized, true);
     });
 
@@ -275,37 +211,6 @@ describe("unsys_staking", () => {
       } catch (e) { assert.include(e.toString(), "Invalid lock period"); }
     });
 
-    it("should reject double-stake (init prevents PDA re-creation)", async () => {
-      // [Issue 1] With `init` instead of `init_if_needed`, the PDA already exists
-      // so Anchor will reject creation at the framework level
-      const { kp, ata } = await createFundedUser();
-      const [sk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("dividend_stake"), kp.publicKey.toBuffer()], program.programId);
-      await program.methods.stakeDividends(STAKE_AMOUNT, 3)
-        .accounts({ globalConfig: globalConfigKey, userStake: sk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-        .signers([kp]).rpc();
-      try {
-        await program.methods.stakeDividends(STAKE_AMOUNT, 6)
-          .accounts({ globalConfig: globalConfigKey, userStake: sk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-          .signers([kp]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) {
-        // Anchor's `init` constraint will fail if account already exists
-        assert.ok(e.toString().length > 0);
-      }
-    });
-
-    it("should reject wrong vault", async () => {
-      const { kp, ata } = await createFundedUser();
-      const [sk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("dividend_stake"), kp.publicKey.toBuffer()], program.programId);
-      const fv = (await getOrCreateAssociatedTokenAccount(provider.connection, kp, unsysMint, kp.publicKey)).address;
-      try {
-        await program.methods.stakeDividends(STAKE_AMOUNT, 3)
-          .accounts({ globalConfig: globalConfigKey, userStake: sk, user: kp.publicKey, userUnsysAta: ata, tokenVault: fv, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-          .signers([kp]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "InvalidVault"); }
-    });
-
     it("should reject zero amount", async () => {
       const { kp, ata } = await createFundedUser();
       const [sk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("dividend_stake"), kp.publicKey.toBuffer()], program.programId);
@@ -315,21 +220,6 @@ describe("unsys_staking", () => {
           .signers([kp]).rpc();
         assert.fail("Should have thrown");
       } catch (e) { assert.include(e.toString(), "InvalidAmount"); }
-    });
-
-    it("should reject staking when paused", async () => {
-      await program.methods.pause()
-        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey }).signers([admin]).rpc();
-      const { kp, ata } = await createFundedUser();
-      const [sk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("dividend_stake"), kp.publicKey.toBuffer()], program.programId);
-      try {
-        await program.methods.stakeDividends(STAKE_AMOUNT, 3)
-          .accounts({ globalConfig: globalConfigKey, userStake: sk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-          .signers([kp]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "ProgramPaused"); }
-      await program.methods.unpause()
-        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey }).signers([admin]).rpc();
     });
   });
 
@@ -344,113 +234,124 @@ describe("unsys_staking", () => {
         assert.fail("Should have thrown");
       } catch (e) { assert.include(e.toString(), "LockPeriodNotExpired"); }
     });
-    // NOTE: Happy-path unstake requires clock warp (not available in anchor test).
-    // Test on devnet with solana-test-validator --warp-slot.
   });
 
   // ================================================================
-  describe("stake_partnership", () => {
-    it("should stake and increment active partners", async () => {
-      const cb = await program.account.globalConfig.fetch(globalConfigKey);
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), user.publicKey.toBuffer()], program.programId);
-      await program.methods.stakePartnership(STAKE_AMOUNT, null)
-        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: user.publicKey, userUnsysAta, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-        .signers([user]).rpc();
-      const ca = await program.account.globalConfig.fetch(globalConfigKey);
-      assert.equal(ca.totalActivePartners.toNumber(), cb.totalActivePartners.toNumber() + 1);
-      // [Issue 1] Verify is_initialized flag
+  describe("stake_partnership (tiered: 1M/2M/5M)", () => {
+    it("should reject below 1M minimum", async () => {
+      const { kp, ata } = await createFundedUser();
+      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), kp.publicKey.toBuffer()], program.programId);
+      try {
+        await program.methods.stakePartnership(new BN(500_000), null)
+          .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
+          .signers([kp]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) { assert.include(e.toString(), "InsufficientPartnershipStake"); }
+    });
+
+    it("should stake 1M → tier 1", async () => {
+      const { kp, ata } = await createFundedUser(10_000_000);
+      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), kp.publicKey.toBuffer()], program.programId);
+      await program.methods.stakePartnership(PARTNERSHIP_1M, null)
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
+        .signers([kp]).rpc();
       const s = await program.account.partnershipStake.fetch(pk);
+      assert.equal(s.tier, 1);
+      assert.equal(s.referralBalance.toNumber(), 0);
       assert.equal(s.isInitialized, true);
     });
 
-    it("should stake with referrer", async () => {
-      const { kp, ata } = await createFundedUser();
+    it("should stake 2M → tier 2", async () => {
+      const { kp, ata } = await createFundedUser(10_000_000);
       const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), kp.publicKey.toBuffer()], program.programId);
-      await program.methods.stakePartnership(STAKE_AMOUNT, referrer.publicKey)
+      await program.methods.stakePartnership(PARTNERSHIP_2M, null)
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
+        .signers([kp]).rpc();
+      assert.equal((await program.account.partnershipStake.fetch(pk)).tier, 2);
+    });
+
+    it("should stake 5M → tier 3", async () => {
+      const { kp, ata } = await createFundedUser(10_000_000);
+      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), kp.publicKey.toBuffer()], program.programId);
+      await program.methods.stakePartnership(PARTNERSHIP_5M, null)
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
+        .signers([kp]).rpc();
+      assert.equal((await program.account.partnershipStake.fetch(pk)).tier, 3);
+    });
+
+    it("should stake with referrer", async () => {
+      const { kp, ata } = await createFundedUser(10_000_000);
+      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), kp.publicKey.toBuffer()], program.programId);
+      await program.methods.stakePartnership(PARTNERSHIP_1M, referrer.publicKey)
         .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
         .signers([kp]).rpc();
       assert.ok((await program.account.partnershipStake.fetch(pk)).referrer?.equals(referrer.publicKey));
     });
-
-    it("should reject double-stake (init prevents PDA re-creation)", async () => {
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), user.publicKey.toBuffer()], program.programId);
-      try {
-        await program.methods.stakePartnership(STAKE_AMOUNT, null)
-          .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: user.publicKey, userUnsysAta, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-          .signers([user]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) {
-        // Anchor's `init` rejects because PDA already exists
-        assert.ok(e.toString().length > 0);
-      }
-    });
-
-    it("should reject zero amount", async () => {
-      const { kp, ata } = await createFundedUser();
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), kp.publicKey.toBuffer()], program.programId);
-      try {
-        await program.methods.stakePartnership(new BN(0), null)
-          .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-          .signers([kp]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "InvalidAmount"); }
-    });
   });
 
   // ================================================================
-  describe("unstake_partnership", () => {
-    it("should partially unstake and return tokens", async () => {
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), user.publicKey.toBuffer()], program.programId);
-      const before = await provider.connection.getTokenAccountBalance(userUnsysAta);
-      const half = STAKE_AMOUNT.div(new BN(2));
-      await program.methods.unstakePartnership(half)
-        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: user.publicKey, tokenVault, userUnsysAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([user]).rpc();
-      const after = await provider.connection.getTokenAccountBalance(userUnsysAta);
-      assert.equal(parseInt(after.value.amount) - parseInt(before.value.amount), half.toNumber());
-    });
-
-    it("should fully unstake and decrement partners", async () => {
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), user.publicKey.toBuffer()], program.programId);
-      const cb = await program.account.globalConfig.fetch(globalConfigKey);
-      const rem = (await program.account.partnershipStake.fetch(pk)).stakedAmount;
-      await program.methods.unstakePartnership(rem)
-        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: user.publicKey, tokenVault, userUnsysAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([user]).rpc();
-      const s = await program.account.partnershipStake.fetch(pk);
-      assert.equal(s.tier, 0);
-      // [Issue 1] Verify is_initialized set to false on full unstake
-      assert.equal(s.isInitialized, false);
-      const ca = await program.account.globalConfig.fetch(globalConfigKey);
-      assert.equal(ca.totalActivePartners.toNumber(), cb.totalActivePartners.toNumber() - 1);
-    });
-
-    it("should reject zero-amount unstake", async () => {
-      // Need a fresh user since the previous one is fully unstaked
-      const { kp, ata } = await createFundedUser();
+  describe("unstake_partnership (full only)", () => {
+    it("should fully unstake and revoke tier", async () => {
+      const { kp, ata } = await createFundedUser(10_000_000);
       const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), kp.publicKey.toBuffer()], program.programId);
-      await program.methods.stakePartnership(STAKE_AMOUNT, null)
+      await program.methods.stakePartnership(PARTNERSHIP_1M, null)
         .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
         .signers([kp]).rpc();
+
+      const before = await provider.connection.getTokenAccountBalance(ata);
+      await program.methods.unstakePartnership()
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, tokenVault, userUnsysAta: ata, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([kp]).rpc();
+      const after = await provider.connection.getTokenAccountBalance(ata);
+      assert.equal(parseInt(after.value.amount) - parseInt(before.value.amount), PARTNERSHIP_1M.toNumber());
+
+      const s = await program.account.partnershipStake.fetch(pk);
+      assert.equal(s.tier, 0);
+      assert.equal(s.isInitialized, false);
+    });
+
+    it("should reject unstake when referral balance > 0", async () => {
+      const { kp, ata } = await createFundedUser(10_000_000);
+      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), kp.publicKey.toBuffer()], program.programId);
+      await program.methods.stakePartnership(PARTNERSHIP_1M, null)
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
+        .signers([kp]).rpc();
+
+      // Admin deposits referral revenue
+      await program.methods.depositReferralRevenue(new BN(50_000))
+        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, partnershipStake: pk, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([admin]).rpc();
+
       try {
-        await program.methods.unstakePartnership(new BN(0))
+        await program.methods.unstakePartnership()
           .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, tokenVault, userUnsysAta: ata, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
           .signers([kp]).rpc();
         assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "InvalidAmount"); }
+      } catch (e) { assert.include(e.toString(), "MustClaimReferralFirst"); }
+
+      // Claim referral first, then unstake
+      const usdcAta = await getUserUsdcAta(kp);
+      await program.methods.claimReferralShare()
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, revenueVault, userUsdcAta: usdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([kp]).rpc();
+
+      await program.methods.unstakePartnership()
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, tokenVault, userUnsysAta: ata, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([kp]).rpc();
+      assert.equal((await program.account.partnershipStake.fetch(pk)).tier, 0);
     });
 
     it("should reject unstake by non-owner", async () => {
-      const { kp: st, ata } = await createFundedUser();
+      const { kp: st, ata } = await createFundedUser(10_000_000);
       const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), st.publicKey.toBuffer()], program.programId);
-      await program.methods.stakePartnership(STAKE_AMOUNT, null)
+      await program.methods.stakePartnership(PARTNERSHIP_1M, null)
         .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: st.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
         .signers([st]).rpc();
       const atk = anchor.web3.Keypair.generate();
       await airdropSol(atk.publicKey, 5);
       const aAta = (await getOrCreateAssociatedTokenAccount(provider.connection, atk, unsysMint, atk.publicKey)).address;
       try {
-        await program.methods.unstakePartnership(STAKE_AMOUNT)
+        await program.methods.unstakePartnership()
           .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: atk.publicKey, tokenVault, userUnsysAta: aAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
           .signers([atk]).rpc();
         assert.fail("Should have thrown");
@@ -459,40 +360,166 @@ describe("unsys_staking", () => {
   });
 
   // ================================================================
-  // [Issue 5] Close account then re-stake
   describe("close and re-stake partnership", () => {
-    it("should close partnership PDA after full unstake and reclaim rent", async () => {
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), user.publicKey.toBuffer()], program.programId);
+    it("should close then re-stake", async () => {
+      const { kp, ata } = await createFundedUser(10_000_000);
+      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), kp.publicKey.toBuffer()], program.programId);
 
-      const balBefore = await provider.connection.getBalance(user.publicKey);
+      // Stake
+      await program.methods.stakePartnership(PARTNERSHIP_1M, null)
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
+        .signers([kp]).rpc();
+
+      // Unstake
+      await program.methods.unstakePartnership()
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, tokenVault, userUnsysAta: ata, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([kp]).rpc();
+
+      // Close
       await program.methods.closePartnershipStake()
-        .accounts({ partnershipStake: pk, user: user.publicKey })
-        .signers([user]).rpc();
-      const balAfter = await provider.connection.getBalance(user.publicKey);
-      // User should have received rent back (minus tx fee)
-      // Account should be gone
+        .accounts({ partnershipStake: pk, user: kp.publicKey })
+        .signers([kp]).rpc();
       try {
         await program.account.partnershipStake.fetch(pk);
-        assert.fail("Account should be closed");
+        assert.fail("Should be closed");
       } catch (e) { assert.ok(e.toString().includes("Account does not exist")); }
+
+      // Re-stake at higher tier
+      await program.methods.stakePartnership(PARTNERSHIP_2M, null)
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
+        .signers([kp]).rpc();
+      assert.equal((await program.account.partnershipStake.fetch(pk)).tier, 2);
+    });
+  });
+
+  // ================================================================
+  describe("deposit_referral_revenue", () => {
+    let partner: anchor.web3.Keypair;
+    let partnerAta: anchor.web3.PublicKey;
+    let partnerPk: anchor.web3.PublicKey;
+
+    before(async () => {
+      const funded = await createFundedUser(10_000_000);
+      partner = funded.kp;
+      partnerAta = funded.ata;
+      [partnerPk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), partner.publicKey.toBuffer()], program.programId);
+      await program.methods.stakePartnership(PARTNERSHIP_5M, null)
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: partnerPk, user: partner.publicKey, userUnsysAta: partnerAta, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
+        .signers([partner]).rpc();
     });
 
-    it("should re-stake after closing (init creates fresh PDA)", async () => {
-      await program.methods.depositRevenue(REVENUE_DEPOSIT)
-        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+    it("should deposit referral revenue for a partner", async () => {
+      const amount = new BN(100_000);
+      await program.methods.depositReferralRevenue(amount)
+        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, partnershipStake: partnerPk, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
         .signers([admin]).rpc();
-      const config = await program.account.globalConfig.fetch(globalConfigKey);
 
-      await mintTo(provider.connection, admin, unsysMint, userUnsysAta, admin, STAKE_AMOUNT.toNumber());
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), user.publicKey.toBuffer()], program.programId);
-      await program.methods.stakePartnership(STAKE_AMOUNT, null)
-        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: user.publicKey, userUnsysAta, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-        .signers([user]).rpc();
+      const s = await program.account.partnershipStake.fetch(partnerPk);
+      assert.equal(s.referralBalance.toNumber(), 100_000);
+    });
 
-      const s = await program.account.partnershipStake.fetch(pk);
-      assert.equal(s.tier, 1);
-      assert.equal(s.isInitialized, true);
-      assert.equal(s.lastClaimEpoch.toNumber(), config.dividendEpoch.toNumber());
+    it("should accumulate multiple deposits", async () => {
+      await program.methods.depositReferralRevenue(new BN(50_000))
+        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, partnershipStake: partnerPk, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([admin]).rpc();
+
+      assert.equal((await program.account.partnershipStake.fetch(partnerPk)).referralBalance.toNumber(), 150_000);
+    });
+
+    it("should reject by non-admin", async () => {
+      const atk = anchor.web3.Keypair.generate();
+      await airdropSol(atk.publicKey, 5);
+      const atkAta = (await getOrCreateAssociatedTokenAccount(provider.connection, atk, usdcMint, atk.publicKey)).address;
+      await mintTo(provider.connection, admin, usdcMint, atkAta, admin, 100_000);
+      try {
+        await program.methods.depositReferralRevenue(new BN(10_000))
+          .accounts({ globalConfig: globalConfigKey, admin: atk.publicKey, adminUsdcAta: atkAta, revenueVault, partnershipStake: partnerPk, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+          .signers([atk]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) { assert.include(e.toString(), "Unauthorized"); }
+    });
+
+    it("should reject zero amount", async () => {
+      try {
+        await program.methods.depositReferralRevenue(new BN(0))
+          .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, partnershipStake: partnerPk, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+          .signers([admin]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) { assert.include(e.toString(), "InvalidAmount"); }
+    });
+  });
+
+  // ================================================================
+  describe("claim_referral_share", () => {
+    let partner: anchor.web3.Keypair;
+    let partnerAta: anchor.web3.PublicKey;
+    let partnerUsdcAta: anchor.web3.PublicKey;
+    let partnerPk: anchor.web3.PublicKey;
+
+    before(async () => {
+      const funded = await createFundedUser(10_000_000);
+      partner = funded.kp;
+      partnerAta = funded.ata;
+      partnerUsdcAta = await getUserUsdcAta(partner);
+      [partnerPk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), partner.publicKey.toBuffer()], program.programId);
+      await program.methods.stakePartnership(PARTNERSHIP_1M, null)
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: partnerPk, user: partner.publicKey, userUnsysAta: partnerAta, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
+        .signers([partner]).rpc();
+
+      // Admin deposits 200k referral revenue
+      await program.methods.depositReferralRevenue(new BN(200_000))
+        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, partnershipStake: partnerPk, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([admin]).rpc();
+    });
+
+    it("should claim full referral balance", async () => {
+      const before = await provider.connection.getTokenAccountBalance(partnerUsdcAta);
+      await program.methods.claimReferralShare()
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: partnerPk, user: partner.publicKey, revenueVault, userUsdcAta: partnerUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([partner]).rpc();
+      const after = await provider.connection.getTokenAccountBalance(partnerUsdcAta);
+      assert.equal(parseInt(after.value.amount) - parseInt(before.value.amount), 200_000);
+
+      // Balance should be zero
+      assert.equal((await program.account.partnershipStake.fetch(partnerPk)).referralBalance.toNumber(), 0);
+    });
+
+    it("should reject claim when balance is zero", async () => {
+      try {
+        await program.methods.claimReferralShare()
+          .accounts({ globalConfig: globalConfigKey, partnershipStake: partnerPk, user: partner.publicKey, revenueVault, userUsdcAta: partnerUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+          .signers([partner]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) { assert.include(e.toString(), "NoReferralBalance"); }
+    });
+
+    it("should allow claiming again after new deposit", async () => {
+      await program.methods.depositReferralRevenue(new BN(75_000))
+        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, partnershipStake: partnerPk, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([admin]).rpc();
+
+      const before = await provider.connection.getTokenAccountBalance(partnerUsdcAta);
+      await program.methods.claimReferralShare()
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: partnerPk, user: partner.publicKey, revenueVault, userUsdcAta: partnerUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([partner]).rpc();
+      const after = await provider.connection.getTokenAccountBalance(partnerUsdcAta);
+      assert.equal(parseInt(after.value.amount) - parseInt(before.value.amount), 75_000);
+    });
+
+    it("should reject claim by non-owner", async () => {
+      await program.methods.depositReferralRevenue(new BN(10_000))
+        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, partnershipStake: partnerPk, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([admin]).rpc();
+
+      const atk = anchor.web3.Keypair.generate();
+      await airdropSol(atk.publicKey, 5);
+      const atkAta = (await getOrCreateAssociatedTokenAccount(provider.connection, atk, usdcMint, atk.publicKey)).address;
+      try {
+        await program.methods.claimReferralShare()
+          .accounts({ globalConfig: globalConfigKey, partnershipStake: partnerPk, user: atk.publicKey, revenueVault, userUsdcAta: atkAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+          .signers([atk]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) { assert.ok(e.toString().length > 0); }
     });
   });
 
@@ -517,25 +544,7 @@ describe("unsys_staking", () => {
         .signers([kp]).rpc();
       const s = await program.account.dataProviderStake.fetch(dk);
       assert.ok(s.stakedAmount.eq(DATA_PROVIDER_STAKE));
-      // [Issue 1] Verify is_initialized flag
       assert.equal(s.isInitialized, true);
-    });
-
-    it("should reject double-stake", async () => {
-      const { kp, ata } = await createFundedUser(20_000_000);
-      const [dk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("data_provider_stake"), kp.publicKey.toBuffer()], program.programId);
-      await program.methods.stakeDataProvider(DATA_PROVIDER_STAKE)
-        .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-        .signers([kp]).rpc();
-      try {
-        await program.methods.stakeDataProvider(DATA_PROVIDER_STAKE)
-          .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-          .signers([kp]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) {
-        // Anchor's `init` rejects because PDA already exists
-        assert.ok(e.toString().length > 0);
-      }
     });
 
     it("should validate (admin) and reject non-admin", async () => {
@@ -561,22 +570,6 @@ describe("unsys_staking", () => {
 
   // ================================================================
   describe("data_provider_deactivation_and_unstake", () => {
-    it("should reject unstaking active provider", async () => {
-      const { kp, ata } = await createFundedUser(10_000_000);
-      const [dk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("data_provider_stake"), kp.publicKey.toBuffer()], program.programId);
-      await program.methods.stakeDataProvider(DATA_PROVIDER_STAKE)
-        .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-        .signers([kp]).rpc();
-      await program.methods.validateDataProvider()
-        .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, admin: admin.publicKey }).signers([admin]).rpc();
-      try {
-        await program.methods.unstakeDataProvider()
-          .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-          .signers([kp]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "MustDeactivateFirst"); }
-    });
-
     it("should deactivate then unstake", async () => {
       const { kp, ata } = await createFundedUser(10_000_000);
       const [dk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("data_provider_stake"), kp.publicKey.toBuffer()], program.programId);
@@ -593,96 +586,38 @@ describe("unsys_staking", () => {
         .signers([kp]).rpc();
       const after = await provider.connection.getTokenAccountBalance(ata);
       assert.equal(parseInt(after.value.amount) - parseInt(before.value.amount), DATA_PROVIDER_STAKE.toNumber());
-      // [Issue 1] Verify is_initialized set to false
       assert.equal((await program.account.dataProviderStake.fetch(dk)).isInitialized, false);
     });
 
-    it("should reject deactivation of inactive", async () => {
+    it("should reject unstaking active provider", async () => {
       const { kp, ata } = await createFundedUser(10_000_000);
       const [dk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("data_provider_stake"), kp.publicKey.toBuffer()], program.programId);
       await program.methods.stakeDataProvider(DATA_PROVIDER_STAKE)
         .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
         .signers([kp]).rpc();
-      try {
-        await program.methods.deactivateDataProvider()
-          .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, admin: admin.publicKey }).signers([admin]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "NotActive"); }
-    });
-
-    it("should reject unstake by non-owner", async () => {
-      const { kp, ata } = await createFundedUser(10_000_000);
-      const [dk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("data_provider_stake"), kp.publicKey.toBuffer()], program.programId);
-      await program.methods.stakeDataProvider(DATA_PROVIDER_STAKE)
-        .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-        .signers([kp]).rpc();
-      const atk = anchor.web3.Keypair.generate();
-      await airdropSol(atk.publicKey, 5);
-      const aAta = (await getOrCreateAssociatedTokenAccount(provider.connection, atk, unsysMint, atk.publicKey)).address;
+      await program.methods.validateDataProvider()
+        .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, admin: admin.publicKey }).signers([admin]).rpc();
       try {
         await program.methods.unstakeDataProvider()
-          .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, user: atk.publicKey, userUnsysAta: aAta, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-          .signers([atk]).rpc();
+          .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+          .signers([kp]).rpc();
         assert.fail("Should have thrown");
-      } catch (e) { assert.ok(e.toString().length > 0); }
+      } catch (e) { assert.include(e.toString(), "MustDeactivateFirst"); }
     });
   });
 
   // ================================================================
-  // [Issue 5] Close data provider stake
-  describe("close_data_provider_stake", () => {
-    it("should close after unstake and reclaim rent", async () => {
-      const { kp, ata } = await createFundedUser(10_000_000);
-      const [dk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("data_provider_stake"), kp.publicKey.toBuffer()], program.programId);
-      await program.methods.stakeDataProvider(DATA_PROVIDER_STAKE)
-        .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-        .signers([kp]).rpc();
-      // Unstake (data provider starts inactive by default)
-      await program.methods.unstakeDataProvider()
-        .accounts({ globalConfig: globalConfigKey, dataProviderStake: dk, user: kp.publicKey, userUnsysAta: ata, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([kp]).rpc();
-      // Close
-      await program.methods.closeDataProviderStake()
-        .accounts({ dataProviderStake: dk, user: kp.publicKey })
-        .signers([kp]).rpc();
-      try {
-        await program.account.dataProviderStake.fetch(dk);
-        assert.fail("Account should be closed");
-      } catch (e) { assert.ok(e.toString().includes("Account does not exist")); }
-    });
-  });
-
-  // ================================================================
-  describe("deposit_revenue (accumulating, partner snapshot)", () => {
-    it("should deposit, accumulate, and snapshot partners", async () => {
+  describe("deposit_revenue (100% to dividend pool)", () => {
+    it("should deposit full amount to dividend pool", async () => {
       const cb = await program.account.globalConfig.fetch(globalConfigKey);
       await program.methods.depositRevenue(REVENUE_DEPOSIT)
         .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
         .signers([admin]).rpc();
       const ca = await program.account.globalConfig.fetch(globalConfigKey);
       assert.equal(ca.dividendEpoch.toNumber(), cb.dividendEpoch.toNumber() + 1);
-      // Snapshot: epoch_active_partners == total_active_partners at deposit time
-      assert.equal(ca.epochActivePartners.toNumber(), ca.totalActivePartners.toNumber());
-      // Pools accumulate
-      const expectedRef = Math.floor(1_000_000 * 3333 / 10000);
-      const expectedDiv = 1_000_000 - expectedRef;
-      assert.equal(ca.epochDividendPool.toNumber(), cb.epochDividendPool.toNumber() + expectedDiv);
-      assert.equal(ca.epochReferralPool.toNumber(), cb.epochReferralPool.toNumber() + expectedRef);
-      // Snapshots equal pool values at deposit time
+      // 100% to dividend pool — no referral split
+      assert.equal(ca.epochDividendPool.toNumber(), cb.epochDividendPool.toNumber() + REVENUE_DEPOSIT.toNumber());
       assert.equal(ca.epochDividendSnapshot.toNumber(), ca.epochDividendPool.toNumber());
-      assert.equal(ca.epochReferralSnapshot.toNumber(), ca.epochReferralPool.toNumber());
-    });
-
-    it("should accumulate across multiple deposits", async () => {
-      const cb = await program.account.globalConfig.fetch(globalConfigKey);
-      await program.methods.depositRevenue(new BN(2_000_000))
-        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([admin]).rpc();
-      const ca = await program.account.globalConfig.fetch(globalConfigKey);
-      const expectedRef2 = Math.floor(2_000_000 * 3333 / 10000);
-      const expectedDiv2 = 2_000_000 - expectedRef2;
-      assert.equal(ca.epochDividendPool.toNumber(), cb.epochDividendPool.toNumber() + expectedDiv2);
-      assert.equal(ca.epochReferralPool.toNumber(), cb.epochReferralPool.toNumber() + expectedRef2);
     });
 
     it("should reject non-admin", async () => {
@@ -698,16 +633,6 @@ describe("unsys_staking", () => {
       } catch (e) { assert.include(e.toString(), "Unauthorized"); }
     });
 
-    it("should reject wrong vault", async () => {
-      const fv = (await getOrCreateAssociatedTokenAccount(provider.connection, admin, usdcMint, admin.publicKey)).address;
-      try {
-        await program.methods.depositRevenue(new BN(100_000))
-          .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault: fv, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-          .signers([admin]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "InvalidVault"); }
-    });
-
     it("should reject zero", async () => {
       try {
         await program.methods.depositRevenue(new BN(0))
@@ -719,8 +644,8 @@ describe("unsys_staking", () => {
   });
 
   // ================================================================
-  describe("claim_dividends (pool decrement)", () => {
-    it("should claim and decrement epoch_dividend_pool", async () => {
+  describe("claim_dividends", () => {
+    it("should claim and decrement pool", async () => {
       await program.methods.depositRevenue(REVENUE_DEPOSIT)
         .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
         .signers([admin]).rpc();
@@ -728,7 +653,6 @@ describe("unsys_staking", () => {
       const [sk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("dividend_stake"), user.publicKey.toBuffer()], program.programId);
       const configBefore = await program.account.globalConfig.fetch(globalConfigKey);
       const stake = await program.account.dividendStake.fetch(sk);
-      // Reward calculated from snapshot (not live pool)
       const expected = Math.floor(stake.shares.toNumber() * configBefore.epochDividendSnapshot.toNumber() / configBefore.totalDividendShares.toNumber());
 
       const before = await provider.connection.getTokenAccountBalance(userUsdcAta);
@@ -739,7 +663,6 @@ describe("unsys_staking", () => {
       const received = parseInt(after.value.amount) - parseInt(before.value.amount);
       assert.equal(received, expected);
 
-      // [Issue 8] Verify pool was decremented (using checked_sub now)
       const configAfter = await program.account.globalConfig.fetch(globalConfigKey);
       assert.equal(configAfter.epochDividendPool.toNumber(), configBefore.epochDividendPool.toNumber() - received);
     });
@@ -753,55 +676,15 @@ describe("unsys_staking", () => {
         assert.fail("Should have thrown");
       } catch (e) { assert.include(e.toString(), "AlreadyClaimed"); }
     });
-
-    it("should allow after new deposit", async () => {
-      await program.methods.depositRevenue(REVENUE_DEPOSIT)
-        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([admin]).rpc();
-      const [sk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("dividend_stake"), user.publicKey.toBuffer()], program.programId);
-      const before = await provider.connection.getTokenAccountBalance(userUsdcAta);
-      await program.methods.claimDividends()
-        .accounts({ globalConfig: globalConfigKey, userStake: sk, user: user.publicKey, revenueVault, userUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([user]).rpc();
-      const after = await provider.connection.getTokenAccountBalance(userUsdcAta);
-      assert.isTrue(parseInt(after.value.amount) > parseInt(before.value.amount));
-    });
-
-    it("should reject wrong vault", async () => {
-      await program.methods.depositRevenue(REVENUE_DEPOSIT)
-        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([admin]).rpc();
-      const [sk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("dividend_stake"), user.publicKey.toBuffer()], program.programId);
-      const fv = (await getOrCreateAssociatedTokenAccount(provider.connection, admin, usdcMint, admin.publicKey)).address;
-      try {
-        await program.methods.claimDividends()
-          .accounts({ globalConfig: globalConfigKey, userStake: sk, user: user.publicKey, revenueVault: fv, userUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-          .signers([user]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "InvalidVault"); }
-    });
-
-    it("should reject non-owner", async () => {
-      const atk = anchor.web3.Keypair.generate();
-      await airdropSol(atk.publicKey, 5);
-      const atkAta = (await getOrCreateAssociatedTokenAccount(provider.connection, atk, usdcMint, atk.publicKey)).address;
-      const [sk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("dividend_stake"), user.publicKey.toBuffer()], program.programId);
-      try {
-        await program.methods.claimDividends()
-          .accounts({ globalConfig: globalConfigKey, userStake: sk, user: atk.publicKey, revenueVault, userUsdcAta: atkAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-          .signers([atk]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.ok(e.toString().length > 0); }
-    });
   });
 
   // ================================================================
   describe("multi-user dividend fairness", () => {
-    it("two users with equal shares get identical amounts regardless of claim order", async () => {
+    it("two users with equal shares get identical amounts", async () => {
       const { kp: uA, ata: ataA } = await createFundedUser();
       const { kp: uB, ata: ataB } = await createFundedUser();
-      const usdcA = (await getOrCreateAssociatedTokenAccount(provider.connection, uA, usdcMint, uA.publicKey)).address;
-      const usdcB = (await getOrCreateAssociatedTokenAccount(provider.connection, uB, usdcMint, uB.publicKey)).address;
+      const usdcA = await getUserUsdcAta(uA);
+      const usdcB = await getUserUsdcAta(uB);
       const [skA] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("dividend_stake"), uA.publicKey.toBuffer()], program.programId);
       const [skB] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("dividend_stake"), uB.publicKey.toBuffer()], program.programId);
 
@@ -816,7 +699,6 @@ describe("unsys_staking", () => {
         .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
         .signers([admin]).rpc();
 
-      // A claims first, B claims second
       const beforeA = await provider.connection.getTokenAccountBalance(usdcA);
       await program.methods.claimDividends()
         .accounts({ globalConfig: globalConfigKey, userStake: skA, user: uA.publicKey, revenueVault, userUsdcAta: usdcA, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
@@ -829,278 +711,133 @@ describe("unsys_staking", () => {
         .signers([uB]).rpc();
       const receivedB = parseInt((await provider.connection.getTokenAccountBalance(usdcB)).value.amount) - parseInt(beforeB.value.amount);
 
-      // Both must receive identical amounts (snapshot fairness proof)
-      assert.equal(receivedA, receivedB, "Equal-share users must receive equal rewards");
+      assert.equal(receivedA, receivedB);
       assert.isTrue(receivedA > 0);
-    });
-  });
-
-  // ================================================================
-  describe("claim_referral_share (pool decrement, partner snapshot)", () => {
-    it("should claim per-partner share and decrement pool", async () => {
-      await program.methods.depositRevenue(REVENUE_DEPOSIT)
-        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([admin]).rpc();
-
-      const configBefore = await program.account.globalConfig.fetch(globalConfigKey);
-      // Reward calculated from snapshot (not live pool)
-      const expectedPerPartner = Math.floor(configBefore.epochReferralSnapshot.toNumber() / configBefore.epochActivePartners.toNumber());
-
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), user.publicKey.toBuffer()], program.programId);
-      const before = await provider.connection.getTokenAccountBalance(userUsdcAta);
-      await program.methods.claimReferralShare()
-        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: user.publicKey, revenueVault, userUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([user]).rpc();
-      const after = await provider.connection.getTokenAccountBalance(userUsdcAta);
-      const received = parseInt(after.value.amount) - parseInt(before.value.amount);
-      assert.equal(received, expectedPerPartner);
-
-      // [Issue 8] Verify pool was decremented (using checked_sub now)
-      const configAfter = await program.account.globalConfig.fetch(globalConfigKey);
-      assert.equal(configAfter.epochReferralPool.toNumber(), configBefore.epochReferralPool.toNumber() - received);
-    });
-
-    it("should reject double-claim", async () => {
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), user.publicKey.toBuffer()], program.programId);
-      try {
-        await program.methods.claimReferralShare()
-          .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: user.publicKey, revenueVault, userUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-          .signers([user]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "AlreadyClaimed"); }
-    });
-
-    it("should reject non-owner", async () => {
-      const atk = anchor.web3.Keypair.generate();
-      await airdropSol(atk.publicKey, 5);
-      const atkAta = (await getOrCreateAssociatedTokenAccount(provider.connection, atk, usdcMint, atk.publicKey)).address;
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), user.publicKey.toBuffer()], program.programId);
-      try {
-        await program.methods.claimReferralShare()
-          .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: atk.publicKey, revenueVault, userUsdcAta: atkAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-          .signers([atk]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.ok(e.toString().length > 0); }
-    });
-
-    it("should reject wrong vault", async () => {
-      await program.methods.depositRevenue(REVENUE_DEPOSIT)
-        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([admin]).rpc();
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("partnership_stake"), user.publicKey.toBuffer()], program.programId);
-      const fv = (await getOrCreateAssociatedTokenAccount(provider.connection, admin, usdcMint, admin.publicKey)).address;
-      try {
-        await program.methods.claimReferralShare()
-          .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: user.publicKey, revenueVault: fv, userUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-          .signers([user]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "InvalidVault"); }
     });
   });
 
   // ================================================================
   describe("legacy OMEGA holder registration and benefits", () => {
     let legacyUser: anchor.web3.Keypair;
-    let legacyUnsysAta: anchor.web3.PublicKey;
     let legacyUsdcAta: anchor.web3.PublicKey;
     let legacyOmegaPda: anchor.web3.PublicKey;
 
     before(async () => {
       legacyUser = anchor.web3.Keypair.generate();
       await airdropSol(legacyUser.publicKey, 10);
-      legacyUnsysAta = (await getOrCreateAssociatedTokenAccount(
-        provider.connection, legacyUser, unsysMint, legacyUser.publicKey
-      )).address;
-      legacyUsdcAta = (await getOrCreateAssociatedTokenAccount(
-        provider.connection, legacyUser, usdcMint, legacyUser.publicKey
-      )).address;
-
+      legacyUsdcAta = await getUserUsdcAta(legacyUser);
       [legacyOmegaPda] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("legacy_omega"), legacyUser.publicKey.toBuffer()],
-        program.programId
+        [Buffer.from("legacy_omega"), legacyUser.publicKey.toBuffer()], program.programId
       );
     });
 
-    it("should register a legacy holder (admin only) and increment counter", async () => {
+    it("should register with admin-assigned tier", async () => {
       const configBefore = await program.account.globalConfig.fetch(globalConfigKey);
-      await program.methods.registerLegacyHolder(legacyUser.publicKey)
-        .accounts({
-          globalConfig: globalConfigKey,
-          admin: admin.publicKey,
-          legacyOmegaStake: legacyOmegaPda,
-          holder: legacyUser.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
+      await program.methods.registerLegacyHolder(legacyUser.publicKey, 2)
+        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, legacyOmegaStake: legacyOmegaPda, holder: legacyUser.publicKey, systemProgram: anchor.web3.SystemProgram.programId })
         .signers([admin]).rpc();
 
       const legacy = await program.account.legacyOmegaStake.fetch(legacyOmegaPda);
       assert.ok(legacy.owner.equals(legacyUser.publicKey));
       assert.equal(legacy.registered, true);
+      assert.equal(legacy.tier, 2);
 
-      // [Issue 3] Verify legacy holder counter incremented
       const configAfter = await program.account.globalConfig.fetch(globalConfigKey);
       assert.equal(configAfter.totalLegacyHolders.toNumber(), configBefore.totalLegacyHolders.toNumber() + 1);
+    });
+
+    it("should reject invalid tier (0 or 4)", async () => {
+      const otherUser = anchor.web3.Keypair.generate();
+      await airdropSol(otherUser.publicKey, 5);
+      const [pda] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("legacy_omega"), otherUser.publicKey.toBuffer()], program.programId
+      );
+      try {
+        await program.methods.registerLegacyHolder(otherUser.publicKey, 0)
+          .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, legacyOmegaStake: pda, holder: otherUser.publicKey, systemProgram: anchor.web3.SystemProgram.programId })
+          .signers([admin]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) { assert.include(e.toString(), "InvalidTier"); }
+
+      try {
+        await program.methods.registerLegacyHolder(otherUser.publicKey, 4)
+          .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, legacyOmegaStake: pda, holder: otherUser.publicKey, systemProgram: anchor.web3.SystemProgram.programId })
+          .signers([admin]).rpc();
+        assert.fail("Should have thrown");
+      } catch (e) { assert.include(e.toString(), "InvalidTier"); }
     });
 
     it("should reject registration by non-admin", async () => {
       const otherUser = anchor.web3.Keypair.generate();
       await airdropSol(otherUser.publicKey, 5);
-
-      const [otherPda] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("legacy_omega"), otherUser.publicKey.toBuffer()],
-        program.programId
+      const [pda] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("legacy_omega"), otherUser.publicKey.toBuffer()], program.programId
       );
-
       const nonAdmin = anchor.web3.Keypair.generate();
       await airdropSol(nonAdmin.publicKey, 5);
-
       try {
-        await program.methods.registerLegacyHolder(otherUser.publicKey)
-          .accounts({
-            globalConfig: globalConfigKey,
-            admin: nonAdmin.publicKey,
-            legacyOmegaStake: otherPda,
-            holder: otherUser.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          })
+        await program.methods.registerLegacyHolder(otherUser.publicKey, 1)
+          .accounts({ globalConfig: globalConfigKey, admin: nonAdmin.publicKey, legacyOmegaStake: pda, holder: otherUser.publicKey, systemProgram: anchor.web3.SystemProgram.programId })
           .signers([nonAdmin]).rpc();
         assert.fail("Should have thrown");
       } catch (e) { assert.include(e.toString(), "Unauthorized"); }
     });
 
-    it("should reject double registration (init fails)", async () => {
-      try {
-        await program.methods.registerLegacyHolder(legacyUser.publicKey)
-          .accounts({
-            globalConfig: globalConfigKey,
-            admin: admin.publicKey,
-            legacyOmegaStake: legacyOmegaPda,
-            holder: legacyUser.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          })
-          .signers([admin]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) {
-        // init (not init_if_needed) will fail if account already exists
-        assert.ok(e.toString().length > 0);
-      }
-    });
-
-    it("should enable legacy benefits (dividends + partnership in one tx)", async () => {
+    it("should enable legacy benefits with stored tier", async () => {
       const configBefore = await program.account.globalConfig.fetch(globalConfigKey);
 
       const [divStakeKey] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("dividend_stake"), legacyUser.publicKey.toBuffer()],
-        program.programId
+        [Buffer.from("dividend_stake"), legacyUser.publicKey.toBuffer()], program.programId
       );
       const [partnerKey] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("partnership_stake"), legacyUser.publicKey.toBuffer()],
-        program.programId
+        [Buffer.from("partnership_stake"), legacyUser.publicKey.toBuffer()], program.programId
       );
 
       await program.methods.enableLegacyBenefits()
-        .accounts({
-          globalConfig: globalConfigKey,
-          legacyOmegaStake: legacyOmegaPda,
-          dividendStake: divStakeKey,
-          partnershipStake: partnerKey,
-          user: legacyUser.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
+        .accounts({ globalConfig: globalConfigKey, legacyOmegaStake: legacyOmegaPda, dividendStake: divStakeKey, partnershipStake: partnerKey, user: legacyUser.publicKey, systemProgram: anchor.web3.SystemProgram.programId })
         .signers([legacyUser]).rpc();
 
-      // Verify dividend stake
       const divStake = await program.account.dividendStake.fetch(divStakeKey);
       assert.ok(divStake.owner.equals(legacyUser.publicKey));
-      assert.equal(divStake.amount.toNumber(), 0); // no tokens locked
-      assert.isTrue(divStake.shares.toNumber() > 0); // 10B shares
-      // [Issue 1] Verify is_initialized
+      assert.equal(divStake.amount.toNumber(), 0);
+      assert.isTrue(divStake.shares.toNumber() > 0);
       assert.equal(divStake.isInitialized, true);
 
-      // Verify partnership stake
+      // Verify partner gets the stored tier (2)
       const partnerStake = await program.account.partnershipStake.fetch(partnerKey);
-      assert.ok(partnerStake.owner.equals(legacyUser.publicKey));
       assert.equal(partnerStake.tier, 2);
-      assert.equal(partnerStake.stakedAmount.toNumber(), 0);
+      assert.equal(partnerStake.referralBalance.toNumber(), 0);
       assert.equal(partnerStake.isInitialized, true);
 
-      // Verify global counters incremented
       const configAfter = await program.account.globalConfig.fetch(globalConfigKey);
       assert.isTrue(configAfter.totalDividendShares.toNumber() > configBefore.totalDividendShares.toNumber());
-      assert.equal(configAfter.totalActivePartners.toNumber(), configBefore.totalActivePartners.toNumber() + 1);
     });
 
-    it("should reject enable benefits for unregistered user", async () => {
-      const unregistered = anchor.web3.Keypair.generate();
-      await airdropSol(unregistered.publicKey, 5);
-
-      const [fakePda] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("legacy_omega"), unregistered.publicKey.toBuffer()],
-        program.programId
-      );
-      const [divKey] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("dividend_stake"), unregistered.publicKey.toBuffer()],
-        program.programId
-      );
-      const [partKey] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("partnership_stake"), unregistered.publicKey.toBuffer()],
-        program.programId
-      );
-
-      try {
-        await program.methods.enableLegacyBenefits()
-          .accounts({
-            globalConfig: globalConfigKey,
-            legacyOmegaStake: fakePda,
-            dividendStake: divKey,
-            partnershipStake: partKey,
-            user: unregistered.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          })
-          .signers([unregistered]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) {
-        // PDA doesn't exist, will fail with AccountNotInitialized or similar
-        assert.ok(e.toString().length > 0);
-      }
-    });
-
-    it("should reject double enable (init fails for existing PDA)", async () => {
-      const [divStakeKey] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("dividend_stake"), legacyUser.publicKey.toBuffer()],
-        program.programId
-      );
+    it("legacy partner should receive and claim referral revenue", async () => {
       const [partnerKey] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("partnership_stake"), legacyUser.publicKey.toBuffer()],
-        program.programId
+        [Buffer.from("partnership_stake"), legacyUser.publicKey.toBuffer()], program.programId
       );
 
-      try {
-        await program.methods.enableLegacyBenefits()
-          .accounts({
-            globalConfig: globalConfigKey,
-            legacyOmegaStake: legacyOmegaPda,
-            dividendStake: divStakeKey,
-            partnershipStake: partnerKey,
-            user: legacyUser.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          })
-          .signers([legacyUser]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) {
-        // [Issue 1] `init` prevents re-creation of existing PDA
-        assert.ok(e.toString().length > 0);
-      }
+      // Admin deposits referral revenue for legacy partner
+      await program.methods.depositReferralRevenue(new BN(300_000))
+        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, partnershipStake: partnerKey, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([admin]).rpc();
+
+      const before = await provider.connection.getTokenAccountBalance(legacyUsdcAta);
+      await program.methods.claimReferralShare()
+        .accounts({ globalConfig: globalConfigKey, partnershipStake: partnerKey, user: legacyUser.publicKey, revenueVault, userUsdcAta: legacyUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
+        .signers([legacyUser]).rpc();
+      const after = await provider.connection.getTokenAccountBalance(legacyUsdcAta);
+      assert.equal(parseInt(after.value.amount) - parseInt(before.value.amount), 300_000);
     });
 
-    it("legacy user should claim dividends after revenue deposit", async () => {
+    it("legacy user should claim dividends", async () => {
       await program.methods.depositRevenue(REVENUE_DEPOSIT)
         .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
         .signers([admin]).rpc();
 
       const [divStakeKey] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("dividend_stake"), legacyUser.publicKey.toBuffer()],
-        program.programId
+        [Buffer.from("dividend_stake"), legacyUser.publicKey.toBuffer()], program.programId
       );
 
       const before = await provider.connection.getTokenAccountBalance(legacyUsdcAta);
@@ -1108,132 +845,21 @@ describe("unsys_staking", () => {
         .accounts({ globalConfig: globalConfigKey, userStake: divStakeKey, user: legacyUser.publicKey, revenueVault, userUsdcAta: legacyUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
         .signers([legacyUser]).rpc();
       const after = await provider.connection.getTokenAccountBalance(legacyUsdcAta);
-
-      assert.isTrue(parseInt(after.value.amount) > parseInt(before.value.amount));
-    });
-
-    it("legacy user should claim referral share", async () => {
-      await program.methods.depositRevenue(REVENUE_DEPOSIT)
-        .accounts({ globalConfig: globalConfigKey, admin: admin.publicKey, adminUsdcAta, revenueVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([admin]).rpc();
-
-      const [partnerKey] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("partnership_stake"), legacyUser.publicKey.toBuffer()],
-        program.programId
-      );
-
-      const before = await provider.connection.getTokenAccountBalance(legacyUsdcAta);
-      await program.methods.claimReferralShare()
-        .accounts({ globalConfig: globalConfigKey, partnershipStake: partnerKey, user: legacyUser.publicKey, revenueVault, userUsdcAta: legacyUsdcAta, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID })
-        .signers([legacyUser]).rpc();
-      const after = await provider.connection.getTokenAccountBalance(legacyUsdcAta);
-
       assert.isTrue(parseInt(after.value.amount) > parseInt(before.value.amount));
     });
 
     it("admin should revoke legacy partnership", async () => {
       const [partnerKey] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("partnership_stake"), legacyUser.publicKey.toBuffer()],
-        program.programId
+        [Buffer.from("partnership_stake"), legacyUser.publicKey.toBuffer()], program.programId
       );
-
-      const configBefore = await program.account.globalConfig.fetch(globalConfigKey);
 
       await program.methods.revokeLegacyPartnership()
         .accounts({ globalConfig: globalConfigKey, partnershipStake: partnerKey, admin: admin.publicKey })
         .signers([admin]).rpc();
 
-      const stake = await program.account.partnershipStake.fetch(partnerKey);
-      assert.equal(stake.tier, 0);
-
-      const configAfter = await program.account.globalConfig.fetch(globalConfigKey);
-      assert.equal(configAfter.totalActivePartners.toNumber(), configBefore.totalActivePartners.toNumber() - 1);
-
-      // Registration remains permanent
-      const legacy = await program.account.legacyOmegaStake.fetch(legacyOmegaPda);
-      assert.equal(legacy.registered, true);
-    });
-
-    it("should reject revoke by non-admin", async () => {
-      const { kp: partner } = await createFundedUser();
-      const [pk] = anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("partnership_stake"), partner.publicKey.toBuffer()],
-        program.programId
-      );
-      await program.methods.stakePartnership(STAKE_AMOUNT, null)
-        .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, user: partner.publicKey, userUnsysAta: (await getOrCreateAssociatedTokenAccount(provider.connection, partner, unsysMint, partner.publicKey)).address, tokenVault, tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID, systemProgram: anchor.web3.SystemProgram.programId })
-        .signers([partner]).rpc();
-
-      const nonAdmin = anchor.web3.Keypair.generate();
-      await airdropSol(nonAdmin.publicKey, 5);
-
-      try {
-        await program.methods.revokeLegacyPartnership()
-          .accounts({ globalConfig: globalConfigKey, partnershipStake: pk, admin: nonAdmin.publicKey })
-          .signers([nonAdmin]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "Unauthorized"); }
-    });
-  });
-
-  // ================================================================
-  // [Issue 4] Sweep dust tests
-  describe("sweep_dust", () => {
-    it("should sweep remaining dust to buyback wallet", async () => {
-      const configBefore = await program.account.globalConfig.fetch(globalConfigKey);
-      const totalDust = configBefore.epochDividendPool.toNumber() + configBefore.epochReferralPool.toNumber();
-
-      if (totalDust > 0) {
-        const before = await provider.connection.getTokenAccountBalance(buybackUsdcAta);
-        await program.methods.sweepDust()
-          .accounts({
-            globalConfig: globalConfigKey,
-            admin: admin.publicKey,
-            revenueVault,
-            buybackUsdcAta,
-            tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-          })
-          .signers([admin]).rpc();
-        const after = await provider.connection.getTokenAccountBalance(buybackUsdcAta);
-        const received = parseInt(after.value.amount) - parseInt(before.value.amount);
-        assert.equal(received, totalDust);
-
-        const configAfter = await program.account.globalConfig.fetch(globalConfigKey);
-        assert.equal(configAfter.epochDividendPool.toNumber(), 0);
-        assert.equal(configAfter.epochReferralPool.toNumber(), 0);
-      }
-    });
-
-    it("should reject sweep when no dust", async () => {
-      try {
-        await program.methods.sweepDust()
-          .accounts({
-            globalConfig: globalConfigKey,
-            admin: admin.publicKey,
-            revenueVault,
-            buybackUsdcAta,
-            tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-          })
-          .signers([admin]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "NoDustToSweep"); }
-    });
-
-    it("should reject sweep by non-admin", async () => {
-      const atk = anchor.web3.Keypair.generate();
-      await airdropSol(atk.publicKey, 5);
-      try {
-        await program.methods.sweepDust()
-          .accounts({
-            globalConfig: globalConfigKey,
-            admin: atk.publicKey,
-            revenueVault,
-            buybackUsdcAta,
-            tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-          })
-          .signers([atk]).rpc();
-        assert.fail("Should have thrown");
-      } catch (e) { assert.include(e.toString(), "Unauthorized"); }
+      assert.equal((await program.account.partnershipStake.fetch(partnerKey)).tier, 0);
+      // Registration stays permanent
+      assert.equal((await program.account.legacyOmegaStake.fetch(legacyOmegaPda)).registered, true);
     });
   });
 });

@@ -125,26 +125,57 @@
       "args": []
     },
     {
-      "name": "claim_referral_share",
-      "discriminator": [228, 210, 199, 63, 193, 255, 205, 166],
+      "name": "stake_partnership",
+      "discriminator": [128, 9, 210, 114, 118, 244, 25, 115],
       "accounts": [
         { "name": "global_config", "writable": true },
         { "name": "partnership_stake", "writable": true },
         { "name": "user", "writable": true, "signer": true },
-        { "name": "revenue_vault", "writable": true },
-        { "name": "user_usdc_ata", "writable": true },
+        { "name": "user_unsys_ata", "writable": true },
+        { "name": "token_vault", "writable": true },
+        { "name": "token_program" },
+        { "name": "system_program" }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" },
+        { "name": "referrer", "type": { "option": "pubkey" } }
+      ]
+    },
+    {
+      "name": "unstake_partnership",
+      "discriminator": [139, 64, 29, 175, 154, 5, 133, 158],
+      "accounts": [
+        { "name": "global_config", "writable": true },
+        { "name": "partnership_stake", "writable": true },
+        { "name": "user", "writable": true, "signer": true },
+        { "name": "token_vault", "writable": true },
+        { "name": "user_unsys_ata", "writable": true },
         { "name": "token_program" }
       ],
       "args": []
     },
     {
-      "name": "sweep_dust",
-      "discriminator": [9, 49, 242, 88, 156, 84, 109, 15],
+      "name": "deposit_referral_revenue",
+      "discriminator": [130, 222, 197, 9, 176, 93, 226, 108],
       "accounts": [
-        { "name": "global_config", "writable": true },
+        { "name": "global_config" },
         { "name": "admin", "writable": true, "signer": true },
+        { "name": "admin_usdc_ata", "writable": true },
         { "name": "revenue_vault", "writable": true },
-        { "name": "buyback_usdc_ata", "writable": true },
+        { "name": "partnership_stake", "writable": true },
+        { "name": "token_program" }
+      ],
+      "args": [{ "name": "amount", "type": "u64" }]
+    },
+    {
+      "name": "claim_referral_share",
+      "discriminator": [228, 210, 199, 63, 193, 255, 205, 166],
+      "accounts": [
+        { "name": "global_config" },
+        { "name": "partnership_stake", "writable": true },
+        { "name": "user", "writable": true, "signer": true },
+        { "name": "revenue_vault", "writable": true },
+        { "name": "user_usdc_ata", "writable": true },
         { "name": "token_program" }
       ],
       "args": []
@@ -159,7 +190,10 @@
         { "name": "holder" },
         { "name": "system_program" }
       ],
-      "args": [{ "name": "holder", "type": "pubkey" }]
+      "args": [
+        { "name": "holder", "type": "pubkey" },
+        { "name": "tier", "type": "u8" }
+      ]
     },
     {
       "name": "enable_legacy_benefits",
@@ -230,36 +264,6 @@
         { "name": "admin", "writable": true, "signer": true }
       ],
       "args": []
-    },
-    {
-      "name": "stake_partnership",
-      "discriminator": [128, 9, 210, 114, 118, 244, 25, 115],
-      "accounts": [
-        { "name": "global_config", "writable": true },
-        { "name": "partnership_stake", "writable": true },
-        { "name": "user", "writable": true, "signer": true },
-        { "name": "user_unsys_ata", "writable": true },
-        { "name": "token_vault", "writable": true },
-        { "name": "token_program" },
-        { "name": "system_program" }
-      ],
-      "args": [
-        { "name": "amount", "type": "u64" },
-        { "name": "referrer", "type": { "option": "pubkey" } }
-      ]
-    },
-    {
-      "name": "unstake_partnership",
-      "discriminator": [139, 64, 29, 175, 154, 5, 133, 158],
-      "accounts": [
-        { "name": "global_config", "writable": true },
-        { "name": "partnership_stake", "writable": true },
-        { "name": "user", "writable": true, "signer": true },
-        { "name": "token_vault", "writable": true },
-        { "name": "user_unsys_ata", "writable": true },
-        { "name": "token_program" }
-      ],
-      "args": [{ "name": "amount_to_unstake", "type": "u64" }]
     },
     {
       "name": "close_dividend_stake",
@@ -336,7 +340,10 @@
     { "code": 6021, "name": "NotPaused" },
     { "code": 6022, "name": "MathOverflow" },
     { "code": 6023, "name": "MaxLegacyHoldersReached" },
-    { "code": 6024, "name": "NoDustToSweep" }
+    { "code": 6024, "name": "InsufficientPartnershipStake" },
+    { "code": 6025, "name": "MustClaimReferralFirst" },
+    { "code": 6026, "name": "NoReferralBalance" },
+    { "code": 6027, "name": "InvalidTier" }
   ],
   "types": [
     {
@@ -355,11 +362,7 @@
           { "name": "buyback_wallet", "type": "pubkey" },
           { "name": "dividend_epoch", "type": "u64" },
           { "name": "epoch_dividend_pool", "type": "u64" },
-          { "name": "epoch_referral_pool", "type": "u64" },
-          { "name": "total_active_partners", "type": "u64" },
-          { "name": "epoch_active_partners", "type": "u64" },
           { "name": "epoch_dividend_snapshot", "type": "u64" },
-          { "name": "epoch_referral_snapshot", "type": "u64" },
           { "name": "paused", "type": "bool" },
           { "name": "total_legacy_holders", "type": "u64" },
           { "name": "bump", "type": "u8" }
@@ -390,6 +393,7 @@
         "fields": [
           { "name": "owner", "type": "pubkey" },
           { "name": "registered", "type": "bool" },
+          { "name": "tier", "type": "u8" },
           { "name": "bump", "type": "u8" }
         ]
       }
@@ -404,7 +408,7 @@
           { "name": "staked_amount", "type": "u64" },
           { "name": "referrer", "type": { "option": "pubkey" } },
           { "name": "tier", "type": "u8" },
-          { "name": "last_claim_epoch", "type": "u64" },
+          { "name": "referral_balance", "type": "u64" },
           { "name": "bump", "type": "u8" }
         ]
       }
