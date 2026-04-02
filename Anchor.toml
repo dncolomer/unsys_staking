@@ -20,4 +20,8 @@ test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
 [test]
 startup_wait = 10000
 shutdown_wait = 2000
+# [Issue 12] For localnet testing, non-upgradeable is fine.
+# For testnet/devnet, set upgradeable = true to allow iterative fixes.
+# For mainnet, keep upgradeable = true initially with a multisig upgrade authority,
+# then freeze (set authority to None) once the program is battle-tested.
 upgradeable = false
