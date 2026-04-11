@@ -7,11 +7,14 @@ skip-lint = false
 [programs.localnet]
 unsys_staking = "8fQT7WjAw2BLYJcbTPYxLciPmUgh5GS4Jj2Vo1uhoK2q"
 
+[programs.devnet]
+unsys_staking = "GSxEFVkssh6trQ97WZBsMGs1iahdJ6Z2fSPjQ617nKLN"
+
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Localnet"
+cluster = "Devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
@@ -24,4 +27,4 @@ shutdown_wait = 2000
 # For testnet/devnet, set upgradeable = true to allow iterative fixes.
 # For mainnet, keep upgradeable = true initially with a multisig upgrade authority,
 # then freeze (set authority to None) once the program is battle-tested.
-upgradeable = false
+upgradeable = true

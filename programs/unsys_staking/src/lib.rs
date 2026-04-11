@@ -4,7 +4,7 @@ use anchor_spl::{
     token::{self, Mint, Token, TokenAccount, Transfer},
 };
 
-declare_id!("8fQT7WjAw2BLYJcbTPYxLciPmUgh5GS4Jj2Vo1uhoK2q");
+declare_id!("GSxEFVkssh6trQ97WZBsMGs1iahdJ6Z2fSPjQ617nKLN");
 
 // ============================================================
 // Events
@@ -237,9 +237,16 @@ pub mod unsys_staking {
     // Admin: two-step admin transfer
     // ----------------------------------------------------------------
 
-    pub fn propose_admin_transfer(ctx: Context<ProposeAdminTransfer>, new_admin: Pubkey) -> Result<()> {
+    pub fn propose_admin_transfer(
+        ctx: Context<ProposeAdminTransfer>,
+        new_admin: Pubkey,
+    ) -> Result<()> {
         let config = &mut ctx.accounts.global_config;
-        require_keys_eq!(ctx.accounts.admin.key(), config.admin, ErrorCode::Unauthorized);
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            config.admin,
+            ErrorCode::Unauthorized
+        );
         require!(new_admin != Pubkey::default(), ErrorCode::InvalidAdmin);
 
         config.pending_admin = new_admin;
@@ -254,24 +261,37 @@ pub mod unsys_staking {
 
     pub fn accept_admin_transfer(ctx: Context<AcceptAdminTransfer>) -> Result<()> {
         let config = &mut ctx.accounts.global_config;
-        require_keys_eq!(ctx.accounts.new_admin.key(), config.pending_admin, ErrorCode::Unauthorized);
+        require_keys_eq!(
+            ctx.accounts.new_admin.key(),
+            config.pending_admin,
+            ErrorCode::Unauthorized
+        );
 
         let old_admin = config.admin;
         config.admin = config.pending_admin;
         config.pending_admin = Pubkey::default();
 
-        emit!(AdminTransferAccepted { old_admin, new_admin: config.admin });
+        emit!(AdminTransferAccepted {
+            old_admin,
+            new_admin: config.admin
+        });
         msg!("Admin transferred from {} to {}", old_admin, config.admin);
         Ok(())
     }
 
     pub fn cancel_admin_transfer(ctx: Context<CancelAdminTransfer>) -> Result<()> {
         let config = &mut ctx.accounts.global_config;
-        require_keys_eq!(ctx.accounts.admin.key(), config.admin, ErrorCode::Unauthorized);
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            config.admin,
+            ErrorCode::Unauthorized
+        );
 
         config.pending_admin = Pubkey::default();
 
-        emit!(AdminTransferCancelled { admin: config.admin });
+        emit!(AdminTransferCancelled {
+            admin: config.admin
+        });
         msg!("Admin transfer cancelled");
         Ok(())
     }
@@ -282,24 +302,36 @@ pub mod unsys_staking {
 
     pub fn pause(ctx: Context<AdminOnly>) -> Result<()> {
         let config = &mut ctx.accounts.global_config;
-        require_keys_eq!(ctx.accounts.admin.key(), config.admin, ErrorCode::Unauthorized);
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            config.admin,
+            ErrorCode::Unauthorized
+        );
         require!(!config.paused, ErrorCode::AlreadyPaused);
 
         config.paused = true;
 
-        emit!(ProgramPaused { admin: config.admin });
+        emit!(ProgramPaused {
+            admin: config.admin
+        });
         msg!("Program PAUSED by admin");
         Ok(())
     }
 
     pub fn unpause(ctx: Context<AdminOnly>) -> Result<()> {
         let config = &mut ctx.accounts.global_config;
-        require_keys_eq!(ctx.accounts.admin.key(), config.admin, ErrorCode::Unauthorized);
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            config.admin,
+            ErrorCode::Unauthorized
+        );
         require!(config.paused, ErrorCode::NotPaused);
 
         config.paused = false;
 
-        emit!(ProgramUnpaused { admin: config.admin });
+        emit!(ProgramUnpaused {
+            admin: config.admin
+        });
         msg!("Program UNPAUSED by admin");
         Ok(())
     }
@@ -311,7 +343,11 @@ pub mod unsys_staking {
     pub fn deposit_revenue(ctx: Context<DepositRevenue>, amount: u64) -> Result<()> {
         require!(amount > 0, ErrorCode::InvalidAmount);
         require!(!ctx.accounts.global_config.paused, ErrorCode::ProgramPaused);
-        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.global_config.admin,
+            ErrorCode::Unauthorized
+        );
 
         let cpi_accounts = Transfer {
             from: ctx.accounts.admin_usdc_ata.to_account_info(),
@@ -324,10 +360,14 @@ pub mod unsys_staking {
         let config = &mut ctx.accounts.global_config;
 
         // 100% to dividend pool — referral revenue is deposited separately per-partner
-        config.epoch_dividend_pool = config.epoch_dividend_pool
-            .checked_add(amount).ok_or(ErrorCode::MathOverflow)?;
-        config.dividend_epoch = config.dividend_epoch
-            .checked_add(1).ok_or(ErrorCode::MathOverflow)?;
+        config.epoch_dividend_pool = config
+            .epoch_dividend_pool
+            .checked_add(amount)
+            .ok_or(ErrorCode::MathOverflow)?;
+        config.dividend_epoch = config
+            .dividend_epoch
+            .checked_add(1)
+            .ok_or(ErrorCode::MathOverflow)?;
 
         // Snapshot pool at deposit time for fair per-user dividend calculation
         config.epoch_dividend_snapshot = config.epoch_dividend_pool;
@@ -340,7 +380,9 @@ pub mod unsys_staking {
 
         msg!(
             "Deposited {} USDC (epoch {}, div_pool={})",
-            amount, config.dividend_epoch, config.epoch_dividend_pool
+            amount,
+            config.dividend_epoch,
+            config.epoch_dividend_pool
         );
         Ok(())
     }
@@ -349,7 +391,11 @@ pub mod unsys_staking {
     // Dividend staking
     // ----------------------------------------------------------------
 
-    pub fn stake_dividends(ctx: Context<StakeDividends>, amount: u64, lock_months: u8) -> Result<()> {
+    pub fn stake_dividends(
+        ctx: Context<StakeDividends>,
+        amount: u64,
+        lock_months: u8,
+    ) -> Result<()> {
         require!(amount > 0, ErrorCode::InvalidAmount);
         require!(!ctx.accounts.global_config.paused, ErrorCode::ProgramPaused);
 
@@ -364,8 +410,10 @@ pub mod unsys_staking {
             _ => return err!(ErrorCode::InvalidLockPeriod),
         };
         let shares = (amount as u128)
-            .checked_mul(multiplier_bps as u128).ok_or(ErrorCode::MathOverflow)?
-            .checked_div(10000).ok_or(ErrorCode::MathOverflow)?;
+            .checked_mul(multiplier_bps as u128)
+            .ok_or(ErrorCode::MathOverflow)?
+            .checked_div(10000)
+            .ok_or(ErrorCode::MathOverflow)?;
 
         stake.is_initialized = true;
         stake.owner = ctx.accounts.user.key();
@@ -385,10 +433,20 @@ pub mod unsys_staking {
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
         token::transfer(cpi_ctx, amount)?;
 
-        ctx.accounts.global_config.total_dividend_shares = ctx.accounts.global_config.total_dividend_shares
-            .checked_add(shares).ok_or(ErrorCode::MathOverflow)?;
+        ctx.accounts.global_config.total_dividend_shares = ctx
+            .accounts
+            .global_config
+            .total_dividend_shares
+            .checked_add(shares)
+            .ok_or(ErrorCode::MathOverflow)?;
 
-        emit!(DividendStakedEvent { user: ctx.accounts.user.key(), amount, lock_months, shares, multiplier_bps });
+        emit!(DividendStakedEvent {
+            user: ctx.accounts.user.key(),
+            amount,
+            lock_months,
+            shares,
+            multiplier_bps
+        });
         msg!("Staked {} $UNSYS for {} months", amount, lock_months);
         Ok(())
     }
@@ -398,7 +456,10 @@ pub mod unsys_staking {
         let clock = Clock::get()?;
 
         require!(stake.amount > 0, ErrorCode::NoActiveStake);
-        require!(clock.unix_timestamp >= stake.lock_end, ErrorCode::LockPeriodNotExpired);
+        require!(
+            clock.unix_timestamp >= stake.lock_end,
+            ErrorCode::LockPeriodNotExpired
+        );
 
         let amount = stake.amount;
         let shares = stake.shares;
@@ -412,7 +473,11 @@ pub mod unsys_staking {
             to: ctx.accounts.user_unsys_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            cpi_accounts,
+            signer_seeds,
+        );
         token::transfer(cpi_ctx, amount)?;
 
         stake.amount = 0;
@@ -421,10 +486,17 @@ pub mod unsys_staking {
         stake.multiplier_bps = 0;
         stake.is_initialized = false;
 
-        ctx.accounts.global_config.total_dividend_shares = ctx.accounts.global_config.total_dividend_shares
-            .checked_sub(shares).ok_or(ErrorCode::MathOverflow)?;
+        ctx.accounts.global_config.total_dividend_shares = ctx
+            .accounts
+            .global_config
+            .total_dividend_shares
+            .checked_sub(shares)
+            .ok_or(ErrorCode::MathOverflow)?;
 
-        emit!(DividendUnstakedEvent { user: ctx.accounts.user.key(), amount });
+        emit!(DividendUnstakedEvent {
+            user: ctx.accounts.user.key(),
+            amount
+        });
         msg!("Unstaked {} $UNSYS dividends", amount);
         Ok(())
     }
@@ -440,13 +512,17 @@ pub mod unsys_staking {
         let config = &mut ctx.accounts.global_config;
 
         require!(stake.shares > 0, ErrorCode::NoActiveStake);
-        require!(stake.last_claim_epoch < config.dividend_epoch, ErrorCode::AlreadyClaimed);
+        require!(
+            stake.last_claim_epoch < config.dividend_epoch,
+            ErrorCode::AlreadyClaimed
+        );
 
         let snapshot = config.epoch_dividend_snapshot;
         require!(snapshot > 0, ErrorCode::NoRevenueToClaim);
 
         let user_reward = if config.total_dividend_shares > 0 {
-            ((stake.shares as u128 * snapshot as u128) / config.total_dividend_shares as u128) as u64
+            ((stake.shares as u128 * snapshot as u128) / config.total_dividend_shares as u128)
+                as u64
         } else {
             0
         };
@@ -466,18 +542,32 @@ pub mod unsys_staking {
             to: ctx.accounts.user_usdc_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            cpi_accounts,
+            signer_seeds,
+        );
         token::transfer(cpi_ctx, user_reward)?;
 
         let config = &mut ctx.accounts.global_config;
-        config.epoch_dividend_pool = config.epoch_dividend_pool
-            .checked_sub(user_reward).ok_or(ErrorCode::MathOverflow)?;
+        config.epoch_dividend_pool = config
+            .epoch_dividend_pool
+            .checked_sub(user_reward)
+            .ok_or(ErrorCode::MathOverflow)?;
 
         stake.last_claim_ts = Clock::get()?.unix_timestamp;
         stake.last_claim_epoch = current_epoch;
 
-        emit!(DividendClaimedEvent { user: ctx.accounts.user.key(), amount: user_reward, epoch: current_epoch });
-        msg!("Claimed {} USDC dividends (epoch {})", user_reward, current_epoch);
+        emit!(DividendClaimedEvent {
+            user: ctx.accounts.user.key(),
+            amount: user_reward,
+            epoch: current_epoch
+        });
+        msg!(
+            "Claimed {} USDC dividends (epoch {})",
+            user_reward,
+            current_epoch
+        );
         Ok(())
     }
 
@@ -485,10 +575,17 @@ pub mod unsys_staking {
     // Partnership staking (tiered: 1M/2M/5M → tier 1/2/3)
     // ----------------------------------------------------------------
 
-    pub fn stake_partnership(ctx: Context<StakePartnership>, amount: u64, referrer: Option<Pubkey>) -> Result<()> {
+    pub fn stake_partnership(
+        ctx: Context<StakePartnership>,
+        amount: u64,
+        referrer: Option<Pubkey>,
+    ) -> Result<()> {
         require!(amount > 0, ErrorCode::InvalidAmount);
         require!(!ctx.accounts.global_config.paused, ErrorCode::ProgramPaused);
-        require!(amount >= MIN_PARTNERSHIP_STAKE, ErrorCode::InsufficientPartnershipStake);
+        require!(
+            amount >= MIN_PARTNERSHIP_STAKE,
+            ErrorCode::InsufficientPartnershipStake
+        );
 
         let stake = &mut ctx.accounts.partnership_stake;
         require!(!stake.is_initialized, ErrorCode::StakeAlreadyExists);
@@ -511,8 +608,17 @@ pub mod unsys_staking {
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
         token::transfer(cpi_ctx, amount)?;
 
-        emit!(PartnershipStakedEvent { user: ctx.accounts.user.key(), amount, tier, referrer });
-        msg!("Partnership stake active: {} $UNSYS (tier {})", amount, tier);
+        emit!(PartnershipStakedEvent {
+            user: ctx.accounts.user.key(),
+            amount,
+            tier,
+            referrer
+        });
+        msg!(
+            "Partnership stake active: {} $UNSYS (tier {})",
+            amount,
+            tier
+        );
         Ok(())
     }
 
@@ -521,7 +627,10 @@ pub mod unsys_staking {
     pub fn unstake_partnership(ctx: Context<UnstakePartnership>) -> Result<()> {
         let stake = &mut ctx.accounts.partnership_stake;
         require!(stake.staked_amount > 0, ErrorCode::NoActiveStake);
-        require!(stake.referral_balance == 0, ErrorCode::MustClaimReferralFirst);
+        require!(
+            stake.referral_balance == 0,
+            ErrorCode::MustClaimReferralFirst
+        );
 
         let amount = stake.staked_amount;
 
@@ -534,14 +643,21 @@ pub mod unsys_staking {
             to: ctx.accounts.user_unsys_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            cpi_accounts,
+            signer_seeds,
+        );
         token::transfer(cpi_ctx, amount)?;
 
         stake.staked_amount = 0;
         stake.tier = 0;
         stake.is_initialized = false;
 
-        emit!(PartnershipUnstakedEvent { user: ctx.accounts.user.key(), amount });
+        emit!(PartnershipUnstakedEvent {
+            user: ctx.accounts.user.key(),
+            amount
+        });
         msg!("Fully unstaked {} $UNSYS - partner status REVOKED", amount);
         Ok(())
     }
@@ -553,11 +669,21 @@ pub mod unsys_staking {
     /// Admin deposits USDC referral revenue into a specific partner's balance.
     /// The amount is calculated off-chain based on the partner's tier share %
     /// applied to the revenue generated by their referred users.
-    pub fn deposit_referral_revenue(ctx: Context<DepositReferralRevenue>, amount: u64) -> Result<()> {
+    pub fn deposit_referral_revenue(
+        ctx: Context<DepositReferralRevenue>,
+        amount: u64,
+    ) -> Result<()> {
         require!(amount > 0, ErrorCode::InvalidAmount);
         require!(!ctx.accounts.global_config.paused, ErrorCode::ProgramPaused);
-        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
-        require!(ctx.accounts.partnership_stake.tier > 0, ErrorCode::NoActiveStake);
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.global_config.admin,
+            ErrorCode::Unauthorized
+        );
+        require!(
+            ctx.accounts.partnership_stake.tier > 0,
+            ErrorCode::NoActiveStake
+        );
 
         let cpi_accounts = Transfer {
             from: ctx.accounts.admin_usdc_ata.to_account_info(),
@@ -568,15 +694,21 @@ pub mod unsys_staking {
         token::transfer(cpi_ctx, amount)?;
 
         let stake = &mut ctx.accounts.partnership_stake;
-        stake.referral_balance = stake.referral_balance
-            .checked_add(amount).ok_or(ErrorCode::MathOverflow)?;
+        stake.referral_balance = stake
+            .referral_balance
+            .checked_add(amount)
+            .ok_or(ErrorCode::MathOverflow)?;
 
         emit!(ReferralRevenueDeposited {
             partner: stake.owner,
             amount,
             new_balance: stake.referral_balance,
         });
-        msg!("Deposited {} USDC referral revenue for partner {}", amount, stake.owner);
+        msg!(
+            "Deposited {} USDC referral revenue for partner {}",
+            amount,
+            stake.owner
+        );
         Ok(())
     }
 
@@ -603,12 +735,19 @@ pub mod unsys_staking {
             to: ctx.accounts.user_usdc_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            cpi_accounts,
+            signer_seeds,
+        );
         token::transfer(cpi_ctx, amount)?;
 
         stake.referral_balance = 0;
 
-        emit!(ReferralShareClaimedEvent { user: ctx.accounts.user.key(), amount });
+        emit!(ReferralShareClaimedEvent {
+            user: ctx.accounts.user.key(),
+            amount
+        });
         msg!("Claimed {} USDC referral share", amount);
         Ok(())
     }
@@ -620,13 +759,24 @@ pub mod unsys_staking {
     /// Admin registers a past OMEGA holder with an assigned tier.
     /// The holder doesn't need to sign — admin registers them unilaterally.
     /// Capped at MAX_LEGACY_HOLDERS to prevent unbounded dilution.
-    pub fn register_legacy_holder(ctx: Context<RegisterLegacyHolder>, holder: Pubkey, tier: u8) -> Result<()> {
-        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
+    pub fn register_legacy_holder(
+        ctx: Context<RegisterLegacyHolder>,
+        holder: Pubkey,
+        tier: u8,
+    ) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.global_config.admin,
+            ErrorCode::Unauthorized
+        );
         require!(holder != Pubkey::default(), ErrorCode::InvalidAdmin);
         require!(tier >= 1 && tier <= 3, ErrorCode::InvalidTier);
 
         let config = &mut ctx.accounts.global_config;
-        require!(config.total_legacy_holders < MAX_LEGACY_HOLDERS, ErrorCode::MaxLegacyHoldersReached);
+        require!(
+            config.total_legacy_holders < MAX_LEGACY_HOLDERS,
+            ErrorCode::MaxLegacyHoldersReached
+        );
 
         let legacy = &mut ctx.accounts.legacy_omega_stake;
         legacy.owner = holder;
@@ -634,11 +784,19 @@ pub mod unsys_staking {
         legacy.tier = tier;
         legacy.bump = ctx.bumps.legacy_omega_stake;
 
-        config.total_legacy_holders = config.total_legacy_holders
-            .checked_add(1).ok_or(ErrorCode::MathOverflow)?;
+        config.total_legacy_holders = config
+            .total_legacy_holders
+            .checked_add(1)
+            .ok_or(ErrorCode::MathOverflow)?;
 
         emit!(LegacyHolderRegistered { holder, tier });
-        msg!("Legacy OMEGA holder registered: {} (tier {}, {}/{})", holder, tier, config.total_legacy_holders, MAX_LEGACY_HOLDERS);
+        msg!(
+            "Legacy OMEGA holder registered: {} (tier {}, {}/{})",
+            holder,
+            tier,
+            config.total_legacy_holders,
+            MAX_LEGACY_HOLDERS
+        );
         Ok(())
     }
 
@@ -648,7 +806,10 @@ pub mod unsys_staking {
     /// Requires a registered LegacyOmegaStake PDA.
     pub fn enable_legacy_benefits(ctx: Context<EnableLegacyBenefits>) -> Result<()> {
         require!(!ctx.accounts.global_config.paused, ErrorCode::ProgramPaused);
-        require!(ctx.accounts.legacy_omega_stake.registered, ErrorCode::NotLegacyOmega);
+        require!(
+            ctx.accounts.legacy_omega_stake.registered,
+            ErrorCode::NotLegacyOmega
+        );
 
         let clock = Clock::get()?;
         let current_epoch = ctx.accounts.global_config.dividend_epoch;
@@ -669,8 +830,11 @@ pub mod unsys_staking {
         div_stake.bump = ctx.bumps.dividend_stake;
 
         ctx.accounts.global_config.total_dividend_shares = ctx
-            .accounts.global_config.total_dividend_shares
-            .checked_add(BASE_LEGACY_SHARES).ok_or(ErrorCode::MathOverflow)?;
+            .accounts
+            .global_config
+            .total_dividend_shares
+            .checked_add(BASE_LEGACY_SHARES)
+            .ok_or(ErrorCode::MathOverflow)?;
 
         // Set up partnership stake with admin-assigned tier
         let partner_stake = &mut ctx.accounts.partnership_stake;
@@ -689,13 +853,20 @@ pub mod unsys_staking {
             shares: BASE_LEGACY_SHARES,
             tier: legacy_tier,
         });
-        msg!("Legacy OMEGA benefits enabled: 10B shares + tier-{} partnership", legacy_tier);
+        msg!(
+            "Legacy OMEGA benefits enabled: 10B shares + tier-{} partnership",
+            legacy_tier
+        );
         Ok(())
     }
 
     /// Admin revokes partnership status. Registration stays permanent.
     pub fn revoke_legacy_partnership(ctx: Context<RevokeLegacyPartnership>) -> Result<()> {
-        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.global_config.admin,
+            ErrorCode::Unauthorized
+        );
 
         let stake = &mut ctx.accounts.partnership_stake;
         require!(stake.tier > 0, ErrorCode::NotLegacyPartner);
@@ -717,7 +888,10 @@ pub mod unsys_staking {
 
         let stake = &mut ctx.accounts.data_provider_stake;
         require!(!stake.is_initialized, ErrorCode::StakeAlreadyExists);
-        require!(amount >= MIN_DATA_PROVIDER_STAKE, ErrorCode::InsufficientDataProviderStake);
+        require!(
+            amount >= MIN_DATA_PROVIDER_STAKE,
+            ErrorCode::InsufficientDataProviderStake
+        );
 
         stake.is_initialized = true;
         stake.owner = ctx.accounts.user.key();
@@ -733,18 +907,30 @@ pub mod unsys_staking {
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
         token::transfer(cpi_ctx, amount)?;
 
-        emit!(DataProviderStakedEvent { user: ctx.accounts.user.key(), amount });
+        emit!(DataProviderStakedEvent {
+            user: ctx.accounts.user.key(),
+            amount
+        });
         msg!("Data Provider registered: {} $UNSYS", amount);
         Ok(())
     }
 
     pub fn deactivate_data_provider(ctx: Context<DeactivateDataProvider>) -> Result<()> {
-        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
-        require!(ctx.accounts.data_provider_stake.active, ErrorCode::NotActive);
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.global_config.admin,
+            ErrorCode::Unauthorized
+        );
+        require!(
+            ctx.accounts.data_provider_stake.active,
+            ErrorCode::NotActive
+        );
 
         ctx.accounts.data_provider_stake.active = false;
 
-        emit!(DataProviderDeactivatedEvent { user: ctx.accounts.data_provider_stake.owner });
+        emit!(DataProviderDeactivatedEvent {
+            user: ctx.accounts.data_provider_stake.owner
+        });
         msg!("Data Provider deactivated");
         Ok(())
     }
@@ -764,23 +950,36 @@ pub mod unsys_staking {
             to: ctx.accounts.user_unsys_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            cpi_accounts,
+            signer_seeds,
+        );
         token::transfer(cpi_ctx, amount)?;
 
         stake.staked_amount = 0;
         stake.active = false;
         stake.is_initialized = false;
 
-        emit!(DataProviderUnstakedEvent { user: ctx.accounts.user.key(), amount });
+        emit!(DataProviderUnstakedEvent {
+            user: ctx.accounts.user.key(),
+            amount
+        });
         msg!("Unstaked {} $UNSYS data provider", amount);
         Ok(())
     }
 
     pub fn validate_data_provider(ctx: Context<ValidateDataProvider>) -> Result<()> {
-        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.global_config.admin, ErrorCode::Unauthorized);
+        require_keys_eq!(
+            ctx.accounts.admin.key(),
+            ctx.accounts.global_config.admin,
+            ErrorCode::Unauthorized
+        );
         ctx.accounts.data_provider_stake.active = true;
 
-        emit!(DataProviderValidatedEvent { user: ctx.accounts.data_provider_stake.owner });
+        emit!(DataProviderValidatedEvent {
+            user: ctx.accounts.data_provider_stake.owner
+        });
         msg!("Data Provider validated & activated");
         Ok(())
     }
@@ -790,19 +989,25 @@ pub mod unsys_staking {
     // ----------------------------------------------------------------
 
     pub fn close_dividend_stake(ctx: Context<CloseDividendStake>) -> Result<()> {
-        emit!(DividendStakeClosed { user: ctx.accounts.user.key() });
+        emit!(DividendStakeClosed {
+            user: ctx.accounts.user.key()
+        });
         msg!("Dividend stake account closed, rent reclaimed");
         Ok(())
     }
 
     pub fn close_partnership_stake(ctx: Context<ClosePartnershipStake>) -> Result<()> {
-        emit!(PartnershipStakeClosed { user: ctx.accounts.user.key() });
+        emit!(PartnershipStakeClosed {
+            user: ctx.accounts.user.key()
+        });
         msg!("Partnership stake account closed, rent reclaimed");
         Ok(())
     }
 
     pub fn close_data_provider_stake(ctx: Context<CloseDataProviderStake>) -> Result<()> {
-        emit!(DataProviderStakeClosed { user: ctx.accounts.user.key() });
+        emit!(DataProviderStakeClosed {
+            user: ctx.accounts.user.key()
+        });
         msg!("Data provider stake account closed, rent reclaimed");
         Ok(())
     }

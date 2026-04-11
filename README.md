@@ -2,19 +2,20 @@
 
 A Solana on-chain program built with Anchor for the Uncertain Systems (UNSYS) ecosystem. It provides dividend staking, tiered partnership referrals, data provider registration, and legacy OMEGA holder migration.
 
-**Program ID:** `8fQT7WjAw2BLYJcbTPYxLciPmUgh5GS4Jj2Vo1uhoK2q`
+**Program ID (Localnet):** `8fQT7WjAw2BLYJcbTPYxLciPmUgh5GS4Jj2Vo1uhoK2q`  
+**Program ID (Devnet):** `GSxEFVkssh6trQ97WZBsMGs1iahdJ6Z2fSPjQ617nKLN`
 
 ## Architecture
 
 ### On-Chain Accounts
 
-| Account | PDA Seed | Description |
-|---|---|---|
-| `GlobalConfig` | `"global_config_v3"` | Stores mints, vaults, admin, pending admin, dividend epoch, snapshot pool, pause state, legacy holder count |
-| `DividendStake` | `"dividend_stake" + user_pubkey` | Per-user dividend stake with lock period, share multiplier, and epoch tracking |
-| `PartnershipStake` | `"partnership_stake" + user_pubkey` | Per-user partnership stake with tier (1/2/3), optional referrer, and per-partner referral balance |
-| `DataProviderStake` | `"data_provider_stake" + user_pubkey` | Per-user data provider registration (requires admin activation) |
-| `LegacyOmegaStake` | `"legacy_omega" + holder_pubkey` | Admin-registered legacy OMEGA holder with assigned tier |
+| Account             | PDA Seed                              | Description                                                                                                 |
+| ------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `GlobalConfig`      | `"global_config_v3"`                  | Stores mints, vaults, admin, pending admin, dividend epoch, snapshot pool, pause state, legacy holder count |
+| `DividendStake`     | `"dividend_stake" + user_pubkey`      | Per-user dividend stake with lock period, share multiplier, and epoch tracking                              |
+| `PartnershipStake`  | `"partnership_stake" + user_pubkey`   | Per-user partnership stake with tier (1/2/3), optional referrer, and per-partner referral balance           |
+| `DataProviderStake` | `"data_provider_stake" + user_pubkey` | Per-user data provider registration (requires admin activation)                                             |
+| `LegacyOmegaStake`  | `"legacy_omega" + holder_pubkey`      | Admin-registered legacy OMEGA holder with assigned tier                                                     |
 
 ### Token Types
 
@@ -30,32 +31,32 @@ A Solana on-chain program built with Anchor for the Uncertain Systems (UNSYS) ec
 
 ## Instruction Reference (24 total)
 
-| # | Instruction | Who Calls | Description |
-|---|------------|-----------|-------------|
-| 1 | `initialize` | Admin (once) | Creates the `GlobalConfig` PDA. Sets mints (UNSYS, OMEGA, USDC), token vault, revenue vault, admin, and buyback wallet. Validates vault mints and authorities match. Rejects re-initialization. |
-| 2 | `propose_admin_transfer` | Admin | Proposes a new admin address by setting `pending_admin` on config. First step of two-step transfer. |
-| 3 | `accept_admin_transfer` | Pending Admin | The proposed admin signs to accept the role. Replaces `admin`, clears `pending_admin`. |
-| 4 | `cancel_admin_transfer` | Admin | Cancels a pending admin transfer, resetting `pending_admin` to zero. |
-| 5 | `pause` | Admin | Sets `paused = true`. Blocks staking, claiming, deposits, and legacy benefit activation. Admin transfer and close instructions still work. |
-| 6 | `unpause` | Admin | Sets `paused = false`, resuming all operations. |
-| 7 | `deposit_revenue` | Admin | Deposits USDC into the revenue vault. 100% goes to the dividend pool. Increments the epoch and snapshots the pool value for fair per-user calculation. |
-| 8 | `stake_dividends` | User | Locks UNSYS for 3/6/12 months with multipliers (1.1x/1.25x/1.5x). Creates a `DividendStake` PDA with weighted shares. One stake per user — must close before re-staking. |
-| 9 | `unstake_dividends` | User | Returns locked UNSYS after the lock period expires. Zeroes the stake and removes shares from the global total. |
-| 10 | `claim_dividends` | User | Claims proportional share of the dividend pool: `(user_shares × snapshot) / total_shares`. One claim per epoch. Pool decremented by claimed amount. |
-| 11 | `stake_partnership` | User | Stakes 1M+ UNSYS to become a partner. Auto-assigns tier: 1M→T1, 2M→T2, 5M→T3. Creates a `PartnershipStake` PDA with `referral_balance = 0`. |
-| 12 | `unstake_partnership` | User | Full unstake only — returns all staked UNSYS. Requires `referral_balance == 0` (must claim first). Revokes tier, marks uninitialized. |
-| 13 | `deposit_referral_revenue` | Admin | Deposits USDC into a specific partner's `referral_balance`. Amount is calculated off-chain based on the partner's tier % applied to revenue from their referred users. Requires partner tier > 0. |
-| 14 | `claim_referral_share` | User (Partner) | Claims full `referral_balance` as USDC. No epoch gating — claimable whenever balance > 0. Resets balance to 0. |
-| 15 | `register_legacy_holder` | Admin | Registers a past OMEGA holder's wallet with an admin-assigned tier (1/2/3). Creates a `LegacyOmegaStake` PDA. Holder does not sign. Capped at 500 registrations. |
-| 16 | `enable_legacy_benefits` | Legacy User | Activates 10B virtual dividend shares + partnership at the admin-assigned tier. Creates both `DividendStake` and `PartnershipStake` PDAs in one tx. No tokens locked. |
-| 17 | `revoke_legacy_partnership` | Admin | Sets a partner's tier to 0. Prevents future referral deposits. Registration stays permanent. |
-| 18 | `stake_data_provider` | User | Stakes 5M+ UNSYS to register as a data provider. Starts inactive (requires admin validation). |
-| 19 | `validate_data_provider` | Admin | Activates a data provider (`active = true`). |
-| 20 | `deactivate_data_provider` | Admin | Deactivates a data provider (`active = false`). Required before unstaking. |
-| 21 | `unstake_data_provider` | User | Returns staked UNSYS. Must be deactivated first. |
-| 22 | `close_dividend_stake` | User | Closes a zeroed-out `DividendStake` PDA to reclaim rent. Requires `amount == 0` and `shares == 0`. |
-| 23 | `close_partnership_stake` | User | Closes a zeroed-out `PartnershipStake` PDA to reclaim rent. Requires `staked_amount == 0`, `tier == 0`, and `referral_balance == 0`. |
-| 24 | `close_data_provider_stake` | User | Closes a zeroed-out `DataProviderStake` PDA to reclaim rent. Requires `staked_amount == 0`. |
+| #   | Instruction                 | Who Calls      | Description                                                                                                                                                                                       |
+| --- | --------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `initialize`                | Admin (once)   | Creates the `GlobalConfig` PDA. Sets mints (UNSYS, OMEGA, USDC), token vault, revenue vault, admin, and buyback wallet. Validates vault mints and authorities match. Rejects re-initialization.   |
+| 2   | `propose_admin_transfer`    | Admin          | Proposes a new admin address by setting `pending_admin` on config. First step of two-step transfer.                                                                                               |
+| 3   | `accept_admin_transfer`     | Pending Admin  | The proposed admin signs to accept the role. Replaces `admin`, clears `pending_admin`.                                                                                                            |
+| 4   | `cancel_admin_transfer`     | Admin          | Cancels a pending admin transfer, resetting `pending_admin` to zero.                                                                                                                              |
+| 5   | `pause`                     | Admin          | Sets `paused = true`. Blocks staking, claiming, deposits, and legacy benefit activation. Admin transfer and close instructions still work.                                                        |
+| 6   | `unpause`                   | Admin          | Sets `paused = false`, resuming all operations.                                                                                                                                                   |
+| 7   | `deposit_revenue`           | Admin          | Deposits USDC into the revenue vault. 100% goes to the dividend pool. Increments the epoch and snapshots the pool value for fair per-user calculation.                                            |
+| 8   | `stake_dividends`           | User           | Locks UNSYS for 3/6/12 months with multipliers (1.1x/1.25x/1.5x). Creates a `DividendStake` PDA with weighted shares. One stake per user — must close before re-staking.                          |
+| 9   | `unstake_dividends`         | User           | Returns locked UNSYS after the lock period expires. Zeroes the stake and removes shares from the global total.                                                                                    |
+| 10  | `claim_dividends`           | User           | Claims proportional share of the dividend pool: `(user_shares × snapshot) / total_shares`. One claim per epoch. Pool decremented by claimed amount.                                               |
+| 11  | `stake_partnership`         | User           | Stakes 1M+ UNSYS to become a partner. Auto-assigns tier: 1M→T1, 2M→T2, 5M→T3. Creates a `PartnershipStake` PDA with `referral_balance = 0`.                                                       |
+| 12  | `unstake_partnership`       | User           | Full unstake only — returns all staked UNSYS. Requires `referral_balance == 0` (must claim first). Revokes tier, marks uninitialized.                                                             |
+| 13  | `deposit_referral_revenue`  | Admin          | Deposits USDC into a specific partner's `referral_balance`. Amount is calculated off-chain based on the partner's tier % applied to revenue from their referred users. Requires partner tier > 0. |
+| 14  | `claim_referral_share`      | User (Partner) | Claims full `referral_balance` as USDC. No epoch gating — claimable whenever balance > 0. Resets balance to 0.                                                                                    |
+| 15  | `register_legacy_holder`    | Admin          | Registers a past OMEGA holder's wallet with an admin-assigned tier (1/2/3). Creates a `LegacyOmegaStake` PDA. Holder does not sign. Capped at 500 registrations.                                  |
+| 16  | `enable_legacy_benefits`    | Legacy User    | Activates 10B virtual dividend shares + partnership at the admin-assigned tier. Creates both `DividendStake` and `PartnershipStake` PDAs in one tx. No tokens locked.                             |
+| 17  | `revoke_legacy_partnership` | Admin          | Sets a partner's tier to 0. Prevents future referral deposits. Registration stays permanent.                                                                                                      |
+| 18  | `stake_data_provider`       | User           | Stakes 5M+ UNSYS to register as a data provider. Starts inactive (requires admin validation).                                                                                                     |
+| 19  | `validate_data_provider`    | Admin          | Activates a data provider (`active = true`).                                                                                                                                                      |
+| 20  | `deactivate_data_provider`  | Admin          | Deactivates a data provider (`active = false`). Required before unstaking.                                                                                                                        |
+| 21  | `unstake_data_provider`     | User           | Returns staked UNSYS. Must be deactivated first.                                                                                                                                                  |
+| 22  | `close_dividend_stake`      | User           | Closes a zeroed-out `DividendStake` PDA to reclaim rent. Requires `amount == 0` and `shares == 0`.                                                                                                |
+| 23  | `close_partnership_stake`   | User           | Closes a zeroed-out `PartnershipStake` PDA to reclaim rent. Requires `staked_amount == 0`, `tier == 0`, and `referral_balance == 0`.                                                              |
+| 24  | `close_data_provider_stake` | User           | Closes a zeroed-out `DataProviderStake` PDA to reclaim rent. Requires `staked_amount == 0`.                                                                                                       |
 
 ## Use Cases
 
@@ -151,24 +152,24 @@ After unstaking, users can close their PDA accounts to reclaim the rent lamports
 
 **49 tests, all passing.**
 
-| Category | Tests | What's Covered |
-|---|---|---|
-| `initialize` | 2 | Successful init with vault validation, re-initialization rejection |
-| `admin_transfer` | 3 | Propose+accept, non-admin rejection, cancel transfer |
-| `pause/unpause` | 3 | Pause, reject when paused, unpause |
-| `stake_dividends` | 5 | 3/6/12-month multipliers, invalid period, zero amount |
-| `unstake_dividends` | 1 | Lock period enforcement |
-| `stake_partnership` | 5 | Below-minimum rejection, tier 1/2/3 assignment, referrer |
-| `unstake_partnership` | 3 | Full unstake + tier revocation, referral-balance guard, non-owner |
-| `close+re-stake` | 1 | Close PDA then re-stake at higher tier |
-| `deposit_referral_revenue` | 4 | Admin deposit, accumulation, non-admin rejection, zero amount |
-| `claim_referral_share` | 4 | Full balance claim, zero-balance rejection, re-deposit+claim, non-owner |
-| `stake_data_provider` | 3 | Insufficient, 5M+, admin/non-admin validation |
-| `data_provider` | 2 | Deactivate+unstake, active unstake rejection |
-| `deposit_revenue` | 3 | 100% to dividend pool, non-admin, zero |
-| `claim_dividends` | 2 | Snapshot math + pool decrement, double-claim |
-| `multi-user fairness` | 1 | Equal-share users receive identical rewards |
-| `legacy_registration` | 7 | Register with tier, invalid tier, non-admin, enable benefits, referral claim, dividend claim, revoke |
+| Category                   | Tests | What's Covered                                                                                       |
+| -------------------------- | ----- | ---------------------------------------------------------------------------------------------------- |
+| `initialize`               | 2     | Successful init with vault validation, re-initialization rejection                                   |
+| `admin_transfer`           | 3     | Propose+accept, non-admin rejection, cancel transfer                                                 |
+| `pause/unpause`            | 3     | Pause, reject when paused, unpause                                                                   |
+| `stake_dividends`          | 5     | 3/6/12-month multipliers, invalid period, zero amount                                                |
+| `unstake_dividends`        | 1     | Lock period enforcement                                                                              |
+| `stake_partnership`        | 5     | Below-minimum rejection, tier 1/2/3 assignment, referrer                                             |
+| `unstake_partnership`      | 3     | Full unstake + tier revocation, referral-balance guard, non-owner                                    |
+| `close+re-stake`           | 1     | Close PDA then re-stake at higher tier                                                               |
+| `deposit_referral_revenue` | 4     | Admin deposit, accumulation, non-admin rejection, zero amount                                        |
+| `claim_referral_share`     | 4     | Full balance claim, zero-balance rejection, re-deposit+claim, non-owner                              |
+| `stake_data_provider`      | 3     | Insufficient, 5M+, admin/non-admin validation                                                        |
+| `data_provider`            | 2     | Deactivate+unstake, active unstake rejection                                                         |
+| `deposit_revenue`          | 3     | 100% to dividend pool, non-admin, zero                                                               |
+| `claim_dividends`          | 2     | Snapshot math + pool decrement, double-claim                                                         |
+| `multi-user fairness`      | 1     | Equal-share users receive identical rewards                                                          |
+| `legacy_registration`      | 7     | Register with tier, invalid tier, non-admin, enable benefits, referral claim, dividend claim, revoke |
 
 ## Build & Test
 
@@ -206,16 +207,40 @@ rm -rf .anchor/test-ledger test-ledger
 COPYFILE_DISABLE=1 anchor test --skip-build
 ```
 
+## Devnet Deployment
+
+The program is deployed on Solana devnet. See `devnet-addresses.json` for all addresses after running the deploy script.
+
+### Deploy to Devnet
+
+```bash
+# 1. Get devnet SOL (need ~5 SOL)
+# Visit https://faucet.solana.com
+
+# 2. Set CLI to devnet
+solana config set --url devnet
+
+# 3. Build and deploy
+anchor build --no-idl
+anchor deploy --provider.cluster devnet
+
+# 4. Initialize program (creates mints, vaults, GlobalConfig)
+npx ts-node migrations/deploy.ts
+
+# 5. Run smoke test
+npx ts-node scripts/devnet-smoke-test.ts
+```
+
 ## Tech Stack
 
-| Component | Version |
-|---|---|
-| Anchor (Rust) | 0.29.0 |
-| Anchor (CLI) | 0.30.1 |
-| `@coral-xyz/anchor` (TS) | 0.30.1 |
-| Solana CLI | 1.18.26 |
-| Rust toolchain | 1.85.0 |
-| Test runner | ts-mocha + chai |
+| Component                | Version         |
+| ------------------------ | --------------- |
+| Anchor (Rust)            | 0.29.0          |
+| Anchor (CLI)             | 0.30.1          |
+| `@coral-xyz/anchor` (TS) | 0.30.1          |
+| Solana CLI               | 1.18.26         |
+| Rust toolchain           | 1.85.0          |
+| Test runner              | ts-mocha + chai |
 
 ## Project Structure
 
@@ -236,8 +261,11 @@ unsys_staking/
 │           └── lib.rs        # Program source (~1100 lines)
 ├── tests/
 │   └── unsys_staking.ts     # Integration tests (49 tests)
-└── migrations/
-    └── deploy.ts
+├── migrations/
+│   └── deploy.ts            # Devnet deployment/init script
+├── scripts/
+│   └── devnet-smoke-test.ts # Devnet smoke test
+└── devnet-addresses.json    # Deployed addresses (generated)
 ```
 
 ## License

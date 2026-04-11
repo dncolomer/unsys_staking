@@ -1,0 +1,13 @@
+{
+  "network": "devnet",
+  "programId": "GSxEFVkssh6trQ97WZBsMGs1iahdJ6Z2fSPjQ617nKLN",
+  "globalConfig": "82tAZJHT86kSZv4EP5XuCaXUeijfJLL6uRwpRLzHmem",
+  "admin": "Divu4ucfW3u4TFSHWAxNqzCDmj3EKSV4ugn8VYzeTYLi",
+  "unsysMint": "FTxXWEdGiVuYRxkKeCK4VgzqxXcWyTi7stGBKEGkFXMS",
+  "omegaMint": "5uVm7CJu7V2q9SXNZA4pDVq4aBp7N36vTNqaT4rZCxRH",
+  "usdcMint": "HLsjEd27RK5chAr7aby9Fm7jRSUv2hqHwBxycrK35ef7",
+  "tokenVault": "28qUSStWES8KejvQrVeoJsfTEgXKy7cnHwoBXnVXMRFj",
+  "revenueVault": "C8zTgjyBWQFztXuXDe4CAgYPLdrQTzfFyu9GQ7LsNEZZ",
+  "buybackWallet": "CLTwJBsYinKU7bptV8z1NzKdLk1tfror7MfXmgGNRgFw",
+  "deployedAt": "2026-04-11T07:49:02.074Z"
+}
