@@ -1,7 +1,7 @@
 "use client";
 
 import { FC, useState } from "react";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { PartnershipStake } from "@/lib/program";
 import {
   formatUnsys,
@@ -34,7 +34,7 @@ export const PartnershipStaking: FC<Props> = ({
   onClaimReferral,
   onClose,
 }) => {
-  const { connected } = useWallet();
+  const { connected, publicKey } = useWallet();
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -148,6 +148,32 @@ export const PartnershipStaking: FC<Props> = ({
                 {tierInfo?.label || "None"} ({tierInfo?.share || "0%"})
               </p>
             </div>
+          </div>
+
+          {/* Referral Code Info */}
+          <div className="bg-gray-900 border border-gray-700 rounded-lg p-4">
+            <p className="text-sm text-gray-400 mb-2">Your Referral Code</p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 bg-gray-800 text-purple-300 px-3 py-2 rounded text-sm font-mono break-all">
+                {publicKey?.toBase58()}
+              </code>
+              <button
+                onClick={() => {
+                  if (publicKey) {
+                    navigator.clipboard.writeText(publicKey.toBase58());
+                  }
+                }}
+                className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded text-sm transition-colors"
+                title="Copy to clipboard"
+              >
+                Copy
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Share this wallet address as your referral code. Users you refer
+              across UNSYS platform tools will earn you revenue based on your
+              tier.
+            </p>
           </div>
 
           {hasReferralBalance && (
