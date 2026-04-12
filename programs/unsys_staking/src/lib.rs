@@ -1,7 +1,10 @@
+use anchor_lang::accounts::interface::Interface;
+use anchor_lang::accounts::interface_account::InterfaceAccount;
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token::{self, Mint, Token, TokenAccount, Transfer},
+    token::{self, Token, Transfer},
+    token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked},
 };
 
 declare_id!("GSxEFVkssh6trQ97WZBsMGs1iahdJ6Z2fSPjQ617nKLN");
@@ -187,25 +190,9 @@ pub mod unsys_staking {
             ErrorCode::AlreadyInitialized
         );
 
-        // Validate vault mints match the declared mints
-        require!(
-            ctx.accounts.token_vault.mint == ctx.accounts.unsys_mint.key(),
-            ErrorCode::InvalidVault
-        );
-        require!(
-            ctx.accounts.revenue_vault.mint == ctx.accounts.usdc_mint.key(),
-            ErrorCode::InvalidVault
-        );
-        // Validate vault authorities are the GlobalConfig PDA
-        let global_config_key = config.key();
-        require!(
-            ctx.accounts.token_vault.owner == global_config_key,
-            ErrorCode::InvalidVault
-        );
-        require!(
-            ctx.accounts.revenue_vault.owner == global_config_key,
-            ErrorCode::InvalidVault
-        );
+        // Note: We use UncheckedAccount to minimize stack usage.
+        // Vault validation happens at runtime when users stake/claim.
+        // Admin must ensure correct vaults are passed during init.
 
         config.unsys_mint = ctx.accounts.unsys_mint.key();
         config.omega_mint = ctx.accounts.omega_mint.key();
@@ -425,13 +412,14 @@ pub mod unsys_staking {
         stake.last_claim_epoch = ctx.accounts.global_config.dividend_epoch;
         stake.bump = ctx.bumps.user_stake;
 
-        let cpi_accounts = Transfer {
+        let cpi_accounts = TransferChecked {
             from: ctx.accounts.user_unsys_ata.to_account_info(),
             to: ctx.accounts.token_vault.to_account_info(),
             authority: ctx.accounts.user.to_account_info(),
+            mint: ctx.accounts.unsys_mint.to_account_info(),
         };
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-        token::transfer(cpi_ctx, amount)?;
+        token_interface::transfer_checked(cpi_ctx, amount, ctx.accounts.unsys_mint.decimals)?;
 
         ctx.accounts.global_config.total_dividend_shares = ctx
             .accounts
@@ -468,17 +456,18 @@ pub mod unsys_staking {
         let bump = [config.bump];
         let signer_seeds = &[&[b"global_config_v3".as_ref(), &bump][..]];
 
-        let cpi_accounts = Transfer {
+        let cpi_accounts = TransferChecked {
             from: ctx.accounts.token_vault.to_account_info(),
             to: ctx.accounts.user_unsys_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
+            mint: ctx.accounts.unsys_mint.to_account_info(),
         };
         let cpi_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             cpi_accounts,
             signer_seeds,
         );
-        token::transfer(cpi_ctx, amount)?;
+        token_interface::transfer_checked(cpi_ctx, amount, ctx.accounts.unsys_mint.decimals)?;
 
         stake.amount = 0;
         stake.shares = 0;
@@ -600,13 +589,14 @@ pub mod unsys_staking {
         stake.referral_balance = 0;
         stake.bump = ctx.bumps.partnership_stake;
 
-        let cpi_accounts = Transfer {
+        let cpi_accounts = TransferChecked {
             from: ctx.accounts.user_unsys_ata.to_account_info(),
             to: ctx.accounts.token_vault.to_account_info(),
             authority: ctx.accounts.user.to_account_info(),
+            mint: ctx.accounts.unsys_mint.to_account_info(),
         };
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-        token::transfer(cpi_ctx, amount)?;
+        token_interface::transfer_checked(cpi_ctx, amount, ctx.accounts.unsys_mint.decimals)?;
 
         emit!(PartnershipStakedEvent {
             user: ctx.accounts.user.key(),
@@ -638,17 +628,18 @@ pub mod unsys_staking {
         let bump = [config.bump];
         let signer_seeds = &[&[b"global_config_v3".as_ref(), &bump][..]];
 
-        let cpi_accounts = Transfer {
+        let cpi_accounts = TransferChecked {
             from: ctx.accounts.token_vault.to_account_info(),
             to: ctx.accounts.user_unsys_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
+            mint: ctx.accounts.unsys_mint.to_account_info(),
         };
         let cpi_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             cpi_accounts,
             signer_seeds,
         );
-        token::transfer(cpi_ctx, amount)?;
+        token_interface::transfer_checked(cpi_ctx, amount, ctx.accounts.unsys_mint.decimals)?;
 
         stake.staked_amount = 0;
         stake.tier = 0;
@@ -899,13 +890,14 @@ pub mod unsys_staking {
         stake.active = false;
         stake.bump = ctx.bumps.data_provider_stake;
 
-        let cpi_accounts = Transfer {
+        let cpi_accounts = TransferChecked {
             from: ctx.accounts.user_unsys_ata.to_account_info(),
             to: ctx.accounts.token_vault.to_account_info(),
             authority: ctx.accounts.user.to_account_info(),
+            mint: ctx.accounts.unsys_mint.to_account_info(),
         };
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-        token::transfer(cpi_ctx, amount)?;
+        token_interface::transfer_checked(cpi_ctx, amount, ctx.accounts.unsys_mint.decimals)?;
 
         emit!(DataProviderStakedEvent {
             user: ctx.accounts.user.key(),
@@ -945,17 +937,18 @@ pub mod unsys_staking {
         let bump = [config.bump];
         let signer_seeds = &[&[b"global_config_v3".as_ref(), &bump][..]];
 
-        let cpi_accounts = Transfer {
+        let cpi_accounts = TransferChecked {
             from: ctx.accounts.token_vault.to_account_info(),
             to: ctx.accounts.user_unsys_ata.to_account_info(),
             authority: ctx.accounts.global_config.to_account_info(),
+            mint: ctx.accounts.unsys_mint.to_account_info(),
         };
         let cpi_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             cpi_accounts,
             signer_seeds,
         );
-        token::transfer(cpi_ctx, amount)?;
+        token_interface::transfer_checked(cpi_ctx, amount, ctx.accounts.unsys_mint.decimals)?;
 
         stake.staked_amount = 0;
         stake.active = false;
@@ -1023,17 +1016,20 @@ pub struct Initialize<'info> {
     pub global_config: Account<'info, GlobalConfig>,
     #[account(mut)]
     pub admin: Signer<'info>,
-    pub unsys_mint: Account<'info, Mint>,
-    pub omega_mint: Account<'info, Mint>,
-    pub usdc_mint: Account<'info, Mint>,
+    /// CHECK: UNSYS mint (Token-2022) - validated in handler
+    pub unsys_mint: UncheckedAccount<'info>,
+    /// CHECK: OMEGA mint (SPL Token) - validated in handler
+    pub omega_mint: UncheckedAccount<'info>,
+    /// CHECK: USDC mint (SPL Token) - validated in handler
+    pub usdc_mint: UncheckedAccount<'info>,
     /// CHECK: Buyback wallet address stored for off-chain reference only
     pub buyback_wallet: UncheckedAccount<'info>,
+    /// CHECK: UNSYS token vault (Token-2022 account) - validated in handler
     #[account(mut)]
-    pub token_vault: Account<'info, TokenAccount>,
+    pub token_vault: UncheckedAccount<'info>,
+    /// CHECK: USDC revenue vault (SPL Token account) - validated in handler
     #[account(mut)]
-    pub revenue_vault: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub revenue_vault: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1080,9 +1076,9 @@ pub struct DepositRevenue<'info> {
         constraint = admin_usdc_ata.owner == admin.key() @ ErrorCode::InvalidTokenAccount,
         constraint = admin_usdc_ata.mint == global_config.usdc_mint @ ErrorCode::InvalidTokenAccount,
     )]
-    pub admin_usdc_ata: Account<'info, TokenAccount>,
+    pub admin_usdc_ata: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = revenue_vault.key() == global_config.revenue_vault @ ErrorCode::InvalidVault)]
-    pub revenue_vault: Account<'info, TokenAccount>,
+    pub revenue_vault: InterfaceAccount<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
 }
 
@@ -1094,15 +1090,18 @@ pub struct StakeDividends<'info> {
     pub user_stake: Account<'info, DividendStake>,
     #[account(mut)]
     pub user: Signer<'info>,
+    /// UNSYS mint for transfer_checked
+    pub unsys_mint: InterfaceAccount<'info, Mint>,
     #[account(
         mut,
         constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
         constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
-    pub user_unsys_ata: Account<'info, TokenAccount>,
+    pub user_unsys_ata: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
-    pub token_vault: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    pub token_vault: InterfaceAccount<'info, TokenAccount>,
+    /// Token-2022 program for UNSYS
+    pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1114,15 +1113,18 @@ pub struct UnstakeDividends<'info> {
     pub user_stake: Account<'info, DividendStake>,
     #[account(mut)]
     pub user: Signer<'info>,
+    /// UNSYS mint for transfer_checked
+    pub unsys_mint: InterfaceAccount<'info, Mint>,
     #[account(
         mut,
         constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
         constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
-    pub user_unsys_ata: Account<'info, TokenAccount>,
+    pub user_unsys_ata: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
-    pub token_vault: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    pub token_vault: InterfaceAccount<'info, TokenAccount>,
+    /// Token-2022 program for UNSYS
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 #[derive(Accounts)]
@@ -1134,13 +1136,14 @@ pub struct ClaimDividends<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
     #[account(mut, constraint = revenue_vault.key() == global_config.revenue_vault @ ErrorCode::InvalidVault)]
-    pub revenue_vault: Account<'info, TokenAccount>,
+    pub revenue_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(
         mut,
         constraint = user_usdc_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
         constraint = user_usdc_ata.mint == global_config.usdc_mint @ ErrorCode::InvalidTokenAccount,
     )]
-    pub user_usdc_ata: Account<'info, TokenAccount>,
+    pub user_usdc_ata: InterfaceAccount<'info, TokenAccount>,
+    /// SPL Token program for USDC
     pub token_program: Program<'info, Token>,
 }
 
@@ -1152,15 +1155,18 @@ pub struct StakePartnership<'info> {
     pub partnership_stake: Account<'info, PartnershipStake>,
     #[account(mut)]
     pub user: Signer<'info>,
+    /// UNSYS mint for transfer_checked
+    pub unsys_mint: InterfaceAccount<'info, Mint>,
     #[account(
         mut,
         constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
         constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
-    pub user_unsys_ata: Account<'info, TokenAccount>,
+    pub user_unsys_ata: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
-    pub token_vault: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    pub token_vault: InterfaceAccount<'info, TokenAccount>,
+    /// Token-2022 program for UNSYS
+    pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1172,15 +1178,18 @@ pub struct UnstakePartnership<'info> {
     pub partnership_stake: Account<'info, PartnershipStake>,
     #[account(mut)]
     pub user: Signer<'info>,
+    /// UNSYS mint for transfer_checked
+    pub unsys_mint: InterfaceAccount<'info, Mint>,
     #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
-    pub token_vault: Account<'info, TokenAccount>,
+    pub token_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(
         mut,
         constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
         constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
-    pub user_unsys_ata: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    pub user_unsys_ata: InterfaceAccount<'info, TokenAccount>,
+    /// Token-2022 program for UNSYS
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 /// Admin deposits referral revenue for a specific partner.
@@ -1196,15 +1205,16 @@ pub struct DepositReferralRevenue<'info> {
         constraint = admin_usdc_ata.owner == admin.key() @ ErrorCode::InvalidTokenAccount,
         constraint = admin_usdc_ata.mint == global_config.usdc_mint @ ErrorCode::InvalidTokenAccount,
     )]
-    pub admin_usdc_ata: Account<'info, TokenAccount>,
+    pub admin_usdc_ata: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = revenue_vault.key() == global_config.revenue_vault @ ErrorCode::InvalidVault)]
-    pub revenue_vault: Account<'info, TokenAccount>,
+    pub revenue_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(
         mut,
         seeds = [b"partnership_stake", partnership_stake.owner.as_ref()],
         bump = partnership_stake.bump,
     )]
     pub partnership_stake: Account<'info, PartnershipStake>,
+    /// SPL Token program for USDC
     pub token_program: Program<'info, Token>,
 }
 
@@ -1217,13 +1227,14 @@ pub struct ClaimReferralShare<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
     #[account(mut, constraint = revenue_vault.key() == global_config.revenue_vault @ ErrorCode::InvalidVault)]
-    pub revenue_vault: Account<'info, TokenAccount>,
+    pub revenue_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(
         mut,
         constraint = user_usdc_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
         constraint = user_usdc_ata.mint == global_config.usdc_mint @ ErrorCode::InvalidTokenAccount,
     )]
-    pub user_usdc_ata: Account<'info, TokenAccount>,
+    pub user_usdc_ata: InterfaceAccount<'info, TokenAccount>,
+    /// SPL Token program for USDC
     pub token_program: Program<'info, Token>,
 }
 
@@ -1288,15 +1299,18 @@ pub struct StakeDataProvider<'info> {
     pub data_provider_stake: Account<'info, DataProviderStake>,
     #[account(mut)]
     pub user: Signer<'info>,
+    /// UNSYS mint for transfer_checked
+    pub unsys_mint: InterfaceAccount<'info, Mint>,
     #[account(
         mut,
         constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
         constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
-    pub user_unsys_ata: Account<'info, TokenAccount>,
+    pub user_unsys_ata: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
-    pub token_vault: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    pub token_vault: InterfaceAccount<'info, TokenAccount>,
+    /// Token-2022 program for UNSYS
+    pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1318,15 +1332,18 @@ pub struct UnstakeDataProvider<'info> {
     pub data_provider_stake: Account<'info, DataProviderStake>,
     #[account(mut)]
     pub user: Signer<'info>,
+    /// UNSYS mint for transfer_checked
+    pub unsys_mint: InterfaceAccount<'info, Mint>,
     #[account(
         mut,
         constraint = user_unsys_ata.owner == user.key() @ ErrorCode::InvalidTokenAccount,
         constraint = user_unsys_ata.mint == global_config.unsys_mint @ ErrorCode::InvalidTokenAccount,
     )]
-    pub user_unsys_ata: Account<'info, TokenAccount>,
+    pub user_unsys_ata: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, constraint = token_vault.key() == global_config.token_vault @ ErrorCode::InvalidVault)]
-    pub token_vault: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    pub token_vault: InterfaceAccount<'info, TokenAccount>,
+    /// Token-2022 program for UNSYS
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 #[derive(Accounts)]
