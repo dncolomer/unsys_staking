@@ -312,6 +312,7 @@ export default function Home() {
                 : `${formatUsdc(config?.epochDividendPool || 0n)} USDC`
             }
             subtitle={`Epoch ${config?.dividendEpoch?.toString() || "0"}`}
+            note="Refilled monthly with the overall platform distributable revenue."
           />
         </div>
 
