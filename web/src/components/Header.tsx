@@ -1,9 +1,24 @@
 "use client";
 
-import { FC } from "react";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { FC, useState, useEffect } from "react";
+import dynamic from "next/dynamic";
+
+// Dynamically import wallet button with SSR disabled to prevent hydration mismatch
+const WalletMultiButton = dynamic(
+  () =>
+    import("@solana/wallet-adapter-react-ui").then(
+      (mod) => mod.WalletMultiButton,
+    ),
+  { ssr: false },
+);
 
 export const Header: FC = () => {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   return (
     <header className="bg-gray-900 border-b border-gray-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -32,7 +47,13 @@ export const Header: FC = () => {
               Data Provider
             </a>
           </nav>
-          <WalletMultiButton className="!bg-purple-600 hover:!bg-purple-700 !transition-colors" />
+          {mounted ? (
+            <WalletMultiButton className="!bg-purple-600 hover:!bg-purple-700 !transition-colors" />
+          ) : (
+            <button className="bg-purple-600 text-white px-4 py-2 rounded-lg opacity-50">
+              Loading...
+            </button>
+          )}
         </div>
       </div>
     </header>

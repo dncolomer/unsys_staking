@@ -6,6 +6,25 @@ import {
   USDC_MINT,
 } from "./constants";
 
+// Helper to read u64 as little-endian BigInt (browser Buffer polyfill lacks readBigUInt64LE)
+function readU64LE(buffer: Buffer, offset: number): bigint {
+  let result = 0n;
+  for (let i = 0; i < 8; i++) {
+    result |= BigInt(buffer[offset + i]) << BigInt(i * 8);
+  }
+  return result;
+}
+
+// Helper to read i64 as little-endian BigInt
+function readI64LE(buffer: Buffer, offset: number): bigint {
+  const unsigned = readU64LE(buffer, offset);
+  // Check sign bit and convert if negative
+  if (unsigned >= 0x8000000000000000n) {
+    return unsigned - 0x10000000000000000n;
+  }
+  return unsigned;
+}
+
 // Instruction discriminators (from IDL)
 const DISCRIMINATORS = {
   stakeDividends: Buffer.from([233, 176, 28, 203, 245, 144, 234, 38]),
@@ -123,7 +142,7 @@ export async function fetchGlobalConfig(
   const revenueVault = new PublicKey(data.subarray(offset, offset + 32));
   offset += 32;
   const totalDividendShares =
-    data.readBigUInt64LE(offset) + (data.readBigUInt64LE(offset + 8) << 64n);
+    readU64LE(data, offset) + (data.readBigUInt64LE(offset + 8) << 64n);
   offset += 16;
   const admin = new PublicKey(data.subarray(offset, offset + 32));
   offset += 32;
@@ -131,15 +150,15 @@ export async function fetchGlobalConfig(
   offset += 32;
   const buybackWallet = new PublicKey(data.subarray(offset, offset + 32));
   offset += 32;
-  const dividendEpoch = data.readBigUInt64LE(offset);
+  const dividendEpoch = readU64LE(data, offset);
   offset += 8;
-  const epochDividendPool = data.readBigUInt64LE(offset);
+  const epochDividendPool = readU64LE(data, offset);
   offset += 8;
-  const epochDividendSnapshot = data.readBigUInt64LE(offset);
+  const epochDividendSnapshot = readU64LE(data, offset);
   offset += 8;
   const paused = data[offset] === 1;
   offset += 1;
-  const totalLegacyHolders = data.readBigUInt64LE(offset);
+  const totalLegacyHolders = readU64LE(data, offset);
   offset += 8;
   const bump = data[offset];
 
@@ -177,18 +196,18 @@ export async function fetchDividendStake(
   offset += 1;
   const owner = new PublicKey(data.subarray(offset, offset + 32));
   offset += 32;
-  const amount = data.readBigUInt64LE(offset);
+  const amount = readU64LE(data, offset);
   offset += 8;
   const shares =
-    data.readBigUInt64LE(offset) + (data.readBigUInt64LE(offset + 8) << 64n);
+    readU64LE(data, offset) + (data.readBigUInt64LE(offset + 8) << 64n);
   offset += 16;
-  const lockEnd = data.readBigInt64LE(offset);
+  const lockEnd = readI64LE(data, offset);
   offset += 8;
   const multiplierBps = data.readUInt16LE(offset);
   offset += 2;
-  const lastClaimTs = data.readBigInt64LE(offset);
+  const lastClaimTs = readI64LE(data, offset);
   offset += 8;
-  const lastClaimEpoch = data.readBigUInt64LE(offset);
+  const lastClaimEpoch = readU64LE(data, offset);
   offset += 8;
   const bump = data[offset];
 
@@ -220,18 +239,20 @@ export async function fetchPartnershipStake(
   offset += 1;
   const owner = new PublicKey(data.subarray(offset, offset + 32));
   offset += 32;
-  const stakedAmount = data.readBigUInt64LE(offset);
+  const stakedAmount = readU64LE(data, offset);
   offset += 8;
-  // Option<Pubkey> - 1 byte discriminator + 32 bytes if Some
+  // Option<Pubkey> - Borsh serialization: 1 byte discriminator + 32 bytes ONLY if Some
   const hasReferrer = data[offset] === 1;
   offset += 1;
   const referrer = hasReferrer
     ? new PublicKey(data.subarray(offset, offset + 32))
     : null;
-  offset += 32;
+  if (hasReferrer) {
+    offset += 32; // Only skip 32 bytes if referrer is present
+  }
   const tier = data[offset];
   offset += 1;
-  const referralBalance = data.readBigUInt64LE(offset);
+  const referralBalance = readU64LE(data, offset);
   offset += 8;
   const bump = data[offset];
 
@@ -261,7 +282,7 @@ export async function fetchDataProviderStake(
   offset += 1;
   const owner = new PublicKey(data.subarray(offset, offset + 32));
   offset += 32;
-  const stakedAmount = data.readBigUInt64LE(offset);
+  const stakedAmount = readU64LE(data, offset);
   offset += 8;
   const active = data[offset] === 1;
   offset += 1;

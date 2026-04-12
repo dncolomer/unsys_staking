@@ -14,11 +14,13 @@ import {
 
 interface Props {
   stake: PartnershipStake | null;
-  onStake: (amount: number, referrer?: string) => Promise<void>;
+  onStake: (amount: number) => Promise<void>;
   onUnstake: () => Promise<void>;
   onClaimReferral: () => Promise<void>;
+  onClose: () => Promise<void>;
 }
 
+// Tier thresholds: 1M/2M/5M UNSYS tokens
 const TIER_INFO = [
   { tier: 1, min: PARTNERSHIP_TIER_1, share: "10%", label: "Bronze" },
   { tier: 2, min: PARTNERSHIP_TIER_2, share: "30%", label: "Silver" },
@@ -30,13 +32,16 @@ export const PartnershipStaking: FC<Props> = ({
   onStake,
   onUnstake,
   onClaimReferral,
+  onClose,
 }) => {
   const { connected } = useWallet();
   const [amount, setAmount] = useState("");
-  const [referrer, setReferrer] = useState("");
   const [loading, setLoading] = useState(false);
 
   const hasStake = stake?.isInitialized && stake.stakedAmount > 0n;
+  // PDA exists but is empty (was unstaked) - needs to be closed before re-staking
+  const hasEmptyPda =
+    stake !== null && !stake.isInitialized && stake.stakedAmount === 0n;
   const tierInfo = TIER_INFO.find((t) => t.tier === stake?.tier);
   const hasReferralBalance = stake && stake.referralBalance > 0n;
 
@@ -46,9 +51,8 @@ export const PartnershipStaking: FC<Props> = ({
 
     setLoading(true);
     try {
-      await onStake(parsedAmount, referrer || undefined);
+      await onStake(parsedAmount);
       setAmount("");
-      setReferrer("");
     } finally {
       setLoading(false);
     }
@@ -72,6 +76,15 @@ export const PartnershipStaking: FC<Props> = ({
     }
   };
 
+  const handleClose = async () => {
+    setLoading(true);
+    try {
+      await onClose();
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div
       id="partnership"
@@ -83,24 +96,37 @@ export const PartnershipStaking: FC<Props> = ({
         revenue share.
       </p>
 
-      {/* Tier info */}
+      {/* Tier info - clickable to auto-fill amount */}
       <div className="grid grid-cols-3 gap-2 mb-6">
-        {TIER_INFO.map((info) => (
-          <div
-            key={info.tier}
-            className={`rounded-lg p-3 border ${
-              stake?.tier === info.tier
-                ? "bg-purple-900/30 border-purple-500"
-                : "bg-gray-900 border-gray-700"
-            }`}
-          >
-            <div className="text-sm font-semibold text-white">{info.label}</div>
-            <div className="text-xs text-gray-400">
-              {formatUnsys(info.min)}+ UNSYS
-            </div>
-            <div className="text-xs text-purple-400">{info.share} share</div>
-          </div>
-        ))}
+        {TIER_INFO.map((info) => {
+          const tierAmount = info.min / 10 ** UNSYS_DECIMALS;
+          const isSelected = amount === tierAmount.toString();
+          const isCurrentTier = stake?.tier === info.tier;
+
+          return (
+            <button
+              key={info.tier}
+              type="button"
+              onClick={() => !hasStake && setAmount(tierAmount.toString())}
+              disabled={hasStake}
+              className={`rounded-lg p-3 border text-left transition-all ${
+                isCurrentTier
+                  ? "bg-purple-900/30 border-purple-500"
+                  : isSelected
+                    ? "bg-purple-900/20 border-purple-400"
+                    : "bg-gray-900 border-gray-700 hover:border-purple-500/50 hover:bg-gray-800"
+              } ${!hasStake ? "cursor-pointer" : "cursor-default"}`}
+            >
+              <div className="text-sm font-semibold text-white">
+                {info.label}
+              </div>
+              <div className="text-xs text-gray-400">
+                {formatUnsys(info.min)}+ UNSYS
+              </div>
+              <div className="text-xs text-purple-400">{info.share} share</div>
+            </button>
+          );
+        })}
       </div>
 
       {!connected ? (
@@ -123,15 +149,6 @@ export const PartnershipStaking: FC<Props> = ({
               </p>
             </div>
           </div>
-
-          {stake.referrer && (
-            <div className="bg-gray-900 rounded-lg p-4">
-              <p className="text-sm text-gray-400">Referred By</p>
-              <p className="text-sm font-mono text-gray-300 truncate">
-                {stake.referrer.toBase58()}
-              </p>
-            </div>
-          )}
 
           {hasReferralBalance && (
             <div className="bg-purple-900/30 border border-purple-500/50 rounded-lg p-4">
@@ -165,6 +182,22 @@ export const PartnershipStaking: FC<Props> = ({
             </p>
           )}
         </div>
+      ) : hasEmptyPda ? (
+        <div className="space-y-4">
+          <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-4">
+            <p className="text-sm text-yellow-300">
+              You have an empty partnership account from a previous stake. Close
+              it first to reclaim rent, then you can stake again.
+            </p>
+          </div>
+          <button
+            onClick={handleClose}
+            disabled={loading}
+            className="w-full bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 text-white font-semibold py-3 px-4 rounded-lg transition-colors"
+          >
+            {loading ? "Processing..." : "Close Empty Account"}
+          </button>
+        </div>
       ) : (
         <div className="space-y-4">
           <div>
@@ -177,19 +210,6 @@ export const PartnershipStaking: FC<Props> = ({
               onChange={(e) => setAmount(e.target.value)}
               placeholder="1000000"
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">
-              Referrer Address (Optional)
-            </label>
-            <input
-              type="text"
-              value={referrer}
-              onChange={(e) => setReferrer(e.target.value)}
-              placeholder="Solana wallet address"
-              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 font-mono text-sm"
             />
           </div>
 

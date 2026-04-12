@@ -1,59 +1,300 @@
 "use client";
 
+import { useCallback, useState } from "react";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { Header } from "@/components/Header";
 import { StatsCard } from "@/components/StatsCard";
 import { DividendStaking } from "@/components/DividendStaking";
 import { PartnershipStaking } from "@/components/PartnershipStaking";
+import { DataProviderStaking } from "@/components/DataProviderStaking";
 import { useGlobalConfig } from "@/hooks/useGlobalConfig";
 import { useUserStakes } from "@/hooks/useUserStakes";
 import { formatUnsys, formatUsdc } from "@/lib/constants";
+import {
+  createStakeDividendsTransaction,
+  createUnstakeDividendsTransaction,
+  createClaimDividendsTransaction,
+  createStakePartnershipTransaction,
+  createUnstakePartnershipTransaction,
+  createClaimReferralTransaction,
+  createClosePartnershipStakeTransaction,
+  createStakeDataProviderTransaction,
+  createUnstakeDataProviderTransaction,
+} from "@/lib/transactions";
 
 export default function Home() {
-  const { config, loading: configLoading } = useGlobalConfig();
+  const { connection } = useConnection();
+  const { publicKey, sendTransaction } = useWallet();
+  const {
+    config,
+    loading: configLoading,
+    refetch: refetchConfig,
+  } = useGlobalConfig();
   const {
     dividendStake,
     partnershipStake,
-    loading: stakesLoading,
+    dataProviderStake,
+    refetch: refetchStakes,
   } = useUserStakes();
 
-  // Placeholder handlers - will implement transaction logic
-  const handleStakeDividends = async (amount: number, lockMonths: number) => {
-    console.log("Stake dividends:", amount, lockMonths);
-    alert("Transaction signing coming soon!");
-  };
+  const [txStatus, setTxStatus] = useState<string | null>(null);
 
-  const handleUnstakeDividends = async () => {
-    console.log("Unstake dividends");
-    alert("Transaction signing coming soon!");
-  };
+  const handleStakeDividends = useCallback(
+    async (amount: number, lockMonths: number) => {
+      if (!publicKey) return;
 
-  const handleClaimDividends = async () => {
-    console.log("Claim dividends");
-    alert("Transaction signing coming soon!");
-  };
+      try {
+        setTxStatus("Building transaction...");
+        const tx = await createStakeDividendsTransaction(
+          connection,
+          publicKey,
+          amount,
+          lockMonths,
+        );
 
-  const handleStakePartnership = async (amount: number, referrer?: string) => {
-    console.log("Stake partnership:", amount, referrer);
-    alert("Transaction signing coming soon!");
-  };
+        setTxStatus("Please approve the transaction in your wallet...");
+        const signature = await sendTransaction(tx, connection);
 
-  const handleUnstakePartnership = async () => {
-    console.log("Unstake partnership");
-    alert("Transaction signing coming soon!");
-  };
+        setTxStatus("Confirming transaction...");
+        await connection.confirmTransaction(signature, "confirmed");
 
-  const handleClaimReferral = async () => {
-    console.log("Claim referral");
-    alert("Transaction signing coming soon!");
-  };
+        setTxStatus("Success!");
+        await Promise.all([refetchConfig(), refetchStakes()]);
+        setTimeout(() => setTxStatus(null), 3000);
+      } catch (err: any) {
+        console.error("Stake error:", err);
+        setTxStatus(`Error: ${err.message}`);
+        setTimeout(() => setTxStatus(null), 5000);
+      }
+    },
+    [connection, publicKey, sendTransaction, refetchConfig, refetchStakes],
+  );
+
+  const handleUnstakeDividends = useCallback(async () => {
+    if (!publicKey) return;
+
+    try {
+      setTxStatus("Building transaction...");
+      const tx = await createUnstakeDividendsTransaction(connection, publicKey);
+
+      setTxStatus("Please approve the transaction in your wallet...");
+      const signature = await sendTransaction(tx, connection);
+
+      setTxStatus("Confirming transaction...");
+      await connection.confirmTransaction(signature, "confirmed");
+
+      setTxStatus("Success!");
+      await Promise.all([refetchConfig(), refetchStakes()]);
+      setTimeout(() => setTxStatus(null), 3000);
+    } catch (err: any) {
+      console.error("Unstake error:", err);
+      setTxStatus(`Error: ${err.message}`);
+      setTimeout(() => setTxStatus(null), 5000);
+    }
+  }, [connection, publicKey, sendTransaction, refetchConfig, refetchStakes]);
+
+  const handleClaimDividends = useCallback(async () => {
+    if (!publicKey) return;
+
+    try {
+      setTxStatus("Building transaction...");
+      const tx = await createClaimDividendsTransaction(connection, publicKey);
+
+      setTxStatus("Please approve the transaction in your wallet...");
+      const signature = await sendTransaction(tx, connection);
+
+      setTxStatus("Confirming transaction...");
+      await connection.confirmTransaction(signature, "confirmed");
+
+      setTxStatus("Success!");
+      await Promise.all([refetchConfig(), refetchStakes()]);
+      setTimeout(() => setTxStatus(null), 3000);
+    } catch (err: any) {
+      console.error("Claim error:", err);
+      setTxStatus(`Error: ${err.message}`);
+      setTimeout(() => setTxStatus(null), 5000);
+    }
+  }, [connection, publicKey, sendTransaction, refetchConfig, refetchStakes]);
+
+  const handleStakePartnership = useCallback(
+    async (amount: number) => {
+      if (!publicKey) return;
+
+      try {
+        setTxStatus("Building transaction...");
+        const tx = await createStakePartnershipTransaction(
+          connection,
+          publicKey,
+          amount,
+        );
+
+        setTxStatus("Please approve the transaction in your wallet...");
+        const signature = await sendTransaction(tx, connection);
+
+        setTxStatus("Confirming transaction...");
+        await connection.confirmTransaction(signature, "confirmed");
+
+        setTxStatus("Success!");
+        await refetchStakes();
+        setTimeout(() => setTxStatus(null), 3000);
+      } catch (err: any) {
+        console.error("Partnership stake error:", err);
+        setTxStatus(`Error: ${err.message}`);
+        setTimeout(() => setTxStatus(null), 5000);
+      }
+    },
+    [connection, publicKey, sendTransaction, refetchStakes],
+  );
+
+  const handleUnstakePartnership = useCallback(async () => {
+    if (!publicKey) return;
+
+    try {
+      setTxStatus("Building transaction...");
+      const tx = await createUnstakePartnershipTransaction(
+        connection,
+        publicKey,
+      );
+
+      setTxStatus("Please approve the transaction in your wallet...");
+      const signature = await sendTransaction(tx, connection);
+
+      setTxStatus("Confirming transaction...");
+      await connection.confirmTransaction(signature, "confirmed");
+
+      setTxStatus("Success!");
+      await refetchStakes();
+      setTimeout(() => setTxStatus(null), 3000);
+    } catch (err: any) {
+      console.error("Unstake partnership error:", err);
+      setTxStatus(`Error: ${err.message}`);
+      setTimeout(() => setTxStatus(null), 5000);
+    }
+  }, [connection, publicKey, sendTransaction, refetchStakes]);
+
+  const handleClaimReferral = useCallback(async () => {
+    if (!publicKey) return;
+
+    try {
+      setTxStatus("Building transaction...");
+      const tx = await createClaimReferralTransaction(connection, publicKey);
+
+      setTxStatus("Please approve the transaction in your wallet...");
+      const signature = await sendTransaction(tx, connection);
+
+      setTxStatus("Confirming transaction...");
+      await connection.confirmTransaction(signature, "confirmed");
+
+      setTxStatus("Success!");
+      await refetchStakes();
+      setTimeout(() => setTxStatus(null), 3000);
+    } catch (err: any) {
+      console.error("Claim referral error:", err);
+      setTxStatus(`Error: ${err.message}`);
+      setTimeout(() => setTxStatus(null), 5000);
+    }
+  }, [connection, publicKey, sendTransaction, refetchStakes]);
+
+  const handleClosePartnership = useCallback(async () => {
+    if (!publicKey) return;
+
+    try {
+      setTxStatus("Building transaction...");
+      const tx = await createClosePartnershipStakeTransaction(
+        connection,
+        publicKey,
+      );
+
+      setTxStatus("Please approve the transaction in your wallet...");
+      const signature = await sendTransaction(tx, connection);
+
+      setTxStatus("Confirming transaction...");
+      await connection.confirmTransaction(signature, "confirmed");
+
+      setTxStatus("Account closed! You can now stake again.");
+      await refetchStakes();
+      setTimeout(() => setTxStatus(null), 3000);
+    } catch (err: any) {
+      console.error("Close partnership error:", err);
+      setTxStatus(`Error: ${err.message}`);
+      setTimeout(() => setTxStatus(null), 5000);
+    }
+  }, [connection, publicKey, sendTransaction, refetchStakes]);
+
+  const handleStakeDataProvider = useCallback(
+    async (amount: number) => {
+      if (!publicKey) return;
+
+      try {
+        setTxStatus("Building transaction...");
+        const tx = await createStakeDataProviderTransaction(
+          connection,
+          publicKey,
+          amount,
+        );
+
+        setTxStatus("Please approve the transaction in your wallet...");
+        const signature = await sendTransaction(tx, connection);
+
+        setTxStatus("Confirming transaction...");
+        await connection.confirmTransaction(signature, "confirmed");
+
+        setTxStatus("Success! Awaiting admin validation.");
+        await refetchStakes();
+        setTimeout(() => setTxStatus(null), 3000);
+      } catch (err: any) {
+        console.error("Data provider stake error:", err);
+        setTxStatus(`Error: ${err.message}`);
+        setTimeout(() => setTxStatus(null), 5000);
+      }
+    },
+    [connection, publicKey, sendTransaction, refetchStakes],
+  );
+
+  const handleUnstakeDataProvider = useCallback(async () => {
+    if (!publicKey) return;
+
+    try {
+      setTxStatus("Building transaction...");
+      const tx = await createUnstakeDataProviderTransaction(
+        connection,
+        publicKey,
+      );
+
+      setTxStatus("Please approve the transaction in your wallet...");
+      const signature = await sendTransaction(tx, connection);
+
+      setTxStatus("Confirming transaction...");
+      await connection.confirmTransaction(signature, "confirmed");
+
+      setTxStatus("Success!");
+      await refetchStakes();
+      setTimeout(() => setTxStatus(null), 3000);
+    } catch (err: any) {
+      console.error("Unstake data provider error:", err);
+      setTxStatus(`Error: ${err.message}`);
+      setTimeout(() => setTxStatus(null), 5000);
+    }
+  }, [connection, publicKey, sendTransaction, refetchStakes]);
 
   return (
     <div className="min-h-screen">
       <Header />
 
+      {/* Transaction status toast */}
+      {txStatus && (
+        <div className="fixed top-20 right-4 z-50 bg-gray-800 border border-gray-700 rounded-lg p-4 shadow-xl max-w-sm">
+          <p
+            className={`text-sm ${txStatus.startsWith("Error") ? "text-red-400" : txStatus === "Success!" ? "text-green-400" : "text-gray-300"}`}
+          >
+            {txStatus}
+          </p>
+        </div>
+      )}
+
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Stats overview */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           <StatsCard
             title="Total Staked Shares"
             value={
@@ -71,15 +312,6 @@ export default function Home() {
                 : `${formatUsdc(config?.epochDividendPool || 0n)} USDC`
             }
             subtitle={`Epoch ${config?.dividendEpoch?.toString() || "0"}`}
-          />
-          <StatsCard
-            title="Legacy Holders"
-            value={
-              configLoading
-                ? "Loading..."
-                : config?.totalLegacyHolders?.toString() || "0"
-            }
-            subtitle="OMEGA migration"
           />
         </div>
 
@@ -106,6 +338,16 @@ export default function Home() {
             onStake={handleStakePartnership}
             onUnstake={handleUnstakePartnership}
             onClaimReferral={handleClaimReferral}
+            onClose={handleClosePartnership}
+          />
+        </div>
+
+        {/* Data Provider section */}
+        <div className="mt-8">
+          <DataProviderStaking
+            stake={dataProviderStake}
+            onStake={handleStakeDataProvider}
+            onUnstake={handleUnstakeDataProvider}
           />
         </div>
 

@@ -162,12 +162,17 @@ pub struct DataProviderStakeClosed {
 /// Tier 1 = 1M+ (10% referral share, applied off-chain)
 /// Tier 2 = 2M+ (30%)
 /// Tier 3 = 5M+ (50%)
+/// Compute partnership tier based on staked amount.
+/// UNSYS has 6 decimals, so thresholds are in raw units:
+/// - Tier 1: 1M UNSYS = 1_000_000_000_000 raw
+/// - Tier 2: 2M UNSYS = 2_000_000_000_000 raw
+/// - Tier 3: 5M UNSYS = 5_000_000_000_000 raw
 pub fn compute_tier(staked_amount: u64) -> u8 {
-    if staked_amount >= 5_000_000 {
+    if staked_amount >= 5_000_000_000_000 {
         3
-    } else if staked_amount >= 2_000_000 {
+    } else if staked_amount >= 2_000_000_000_000 {
         2
-    } else if staked_amount >= 1_000_000 {
+    } else if staked_amount >= 1_000_000_000_000 {
         1
     } else {
         0
@@ -178,8 +183,9 @@ pub fn compute_tier(staked_amount: u64) -> u8 {
 pub mod unsys_staking {
     use super::*;
 
-    const MIN_DATA_PROVIDER_STAKE: u64 = 5_000_000;
-    const MIN_PARTNERSHIP_STAKE: u64 = 1_000_000;
+    // UNSYS has 6 decimals, so 1M UNSYS = 1_000_000 * 10^6 = 1_000_000_000_000
+    const MIN_DATA_PROVIDER_STAKE: u64 = 5_000_000_000_000; // 5M UNSYS
+    const MIN_PARTNERSHIP_STAKE: u64 = 1_000_000_000_000; // 1M UNSYS
     const BASE_LEGACY_SHARES: u128 = 1_000_000 * 10_000;
     const MAX_LEGACY_HOLDERS: u64 = 500;
 

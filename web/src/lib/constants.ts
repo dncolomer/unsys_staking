@@ -40,11 +40,12 @@ export const USDC_VAULT = new PublicKey(
 export const UNSYS_DECIMALS = 6;
 export const USDC_DECIMALS = 6;
 
-// Staking tiers (in raw token units - 6 decimals)
-export const PARTNERSHIP_TIER_1 = 1_000_000 * 10 ** UNSYS_DECIMALS; // 1M
-export const PARTNERSHIP_TIER_2 = 2_000_000 * 10 ** UNSYS_DECIMALS; // 2M
-export const PARTNERSHIP_TIER_3 = 5_000_000 * 10 ** UNSYS_DECIMALS; // 5M
-export const DATA_PROVIDER_MIN = 5_000_000 * 10 ** UNSYS_DECIMALS; // 5M
+// Staking tiers (in raw token units - UNSYS has 6 decimals)
+// 1M UNSYS = 1_000_000 * 10^6 = 1_000_000_000_000 raw
+export const PARTNERSHIP_TIER_1 = 1_000_000_000_000; // 1M UNSYS
+export const PARTNERSHIP_TIER_2 = 2_000_000_000_000; // 2M UNSYS
+export const PARTNERSHIP_TIER_3 = 5_000_000_000_000; // 5M UNSYS
+export const DATA_PROVIDER_MIN = 5_000_000_000_000; // 5M UNSYS
 
 // Lock period multipliers (basis points)
 export const LOCK_MULTIPLIERS: Record<number, number> = {

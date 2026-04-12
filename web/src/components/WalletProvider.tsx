@@ -21,9 +21,11 @@ interface Props {
 }
 
 export const WalletProvider: FC<Props> = ({ children }) => {
-  // Use mainnet-beta for production
+  // Use env var if set, otherwise use Helius free public RPC
   const endpoint = useMemo(
-    () => process.env.NEXT_PUBLIC_RPC_URL || clusterApiUrl("mainnet-beta"),
+    () =>
+      process.env.NEXT_PUBLIC_RPC_URL ||
+      "https://mainnet.helius-rpc.com/?api-key=d0304fa2-fef8-4269-b4f4-0cb4354aacea",
     [],
   );
 
