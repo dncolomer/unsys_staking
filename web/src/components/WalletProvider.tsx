@@ -11,6 +11,7 @@ import {
   SolflareWalletAdapter,
   CoinbaseWalletAdapter,
 } from "@solana/wallet-adapter-wallets";
+import { OkxWalletAdapter } from "@/lib/okx-wallet-adapter";
 import { clusterApiUrl } from "@solana/web3.js";
 
 // Import wallet adapter styles
@@ -34,6 +35,7 @@ export const WalletProvider: FC<Props> = ({ children }) => {
       new PhantomWalletAdapter(),
       new SolflareWalletAdapter(),
       new CoinbaseWalletAdapter(),
+      new OkxWalletAdapter(),
     ],
     [],
   );
