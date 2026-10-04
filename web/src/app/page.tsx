@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { Transaction } from "@solana/web3.js";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { Header } from "@/components/Header";
 import { StatsCard } from "@/components/StatsCard";
@@ -12,6 +13,7 @@ import { useUserStakes } from "@/hooks/useUserStakes";
 import { formatUnsys, formatUsdc } from "@/lib/constants";
 import {
   createStakeDividendsTransaction,
+  createIncreaseDividendStakeTransaction,
   createUnstakeDividendsTransaction,
   createClaimDividendsTransaction,
   createStakePartnershipTransaction,
@@ -21,6 +23,7 @@ import {
   createStakeDataProviderTransaction,
   createUnstakeDataProviderTransaction,
 } from "@/lib/transactions";
+import { sendAndConfirm, txErrorMessage } from "@/lib/send";
 
 export default function Home() {
   const { connection } = useConnection();
@@ -53,21 +56,82 @@ export default function Home() {
         );
 
         setTxStatus("Please approve the transaction in your wallet...");
-        const signature = await sendTransaction(tx, connection);
-
-        setTxStatus("Confirming transaction...");
-        await connection.confirmTransaction(signature, "confirmed");
+        await sendAndConfirm(connection, tx, sendTransaction, () =>
+          setTxStatus("Confirming transaction..."),
+        );
 
         setTxStatus("Success!");
         await Promise.all([refetchConfig(), refetchStakes()]);
         setTimeout(() => setTxStatus(null), 3000);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Stake error:", err);
-        setTxStatus(`Error: ${err.message}`);
-        setTimeout(() => setTxStatus(null), 5000);
+        setTxStatus(`Error: ${txErrorMessage(err)}`);
+        setTimeout(() => setTxStatus(null), 8000);
       }
     },
     [connection, publicKey, sendTransaction, refetchConfig, refetchStakes],
+  );
+
+  const handleIncreaseDividends = useCallback(
+    async (additionalAmount: number, lockMonths: number) => {
+      if (!publicKey) return;
+
+      try {
+        setTxStatus("Building transaction...");
+        const tx = new Transaction();
+
+        const pendingReward =
+          dividendStake &&
+          config &&
+          config.totalDividendShares > 0n &&
+          dividendStake.lastClaimEpoch < config.dividendEpoch &&
+          config.epochDividendSnapshot > 0n
+            ? (dividendStake.shares * config.epochDividendSnapshot) /
+              config.totalDividendShares
+            : 0n;
+
+        if (pendingReward > 0n) {
+          const claimTx = await createClaimDividendsTransaction(
+            connection,
+            publicKey,
+          );
+          claimTx.instructions.forEach((ix) => tx.add(ix));
+        }
+
+        const increaseTx = await createIncreaseDividendStakeTransaction(
+          connection,
+          publicKey,
+          additionalAmount,
+          lockMonths,
+        );
+        increaseTx.instructions.forEach((ix) => tx.add(ix));
+
+        tx.feePayer = publicKey;
+        tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+        setTxStatus("Please approve the transaction in your wallet...");
+        await sendAndConfirm(connection, tx, sendTransaction, () =>
+          setTxStatus("Confirming transaction..."),
+        );
+
+        setTxStatus("Success!");
+        await Promise.all([refetchConfig(), refetchStakes()]);
+        setTimeout(() => setTxStatus(null), 3000);
+      } catch (err: unknown) {
+        console.error("Increase stake error:", err);
+        setTxStatus(`Error: ${txErrorMessage(err)}`);
+        setTimeout(() => setTxStatus(null), 8000);
+      }
+    },
+    [
+      connection,
+      publicKey,
+      sendTransaction,
+      refetchConfig,
+      refetchStakes,
+      dividendStake,
+      config,
+    ],
   );
 
   const handleUnstakeDividends = useCallback(async () => {
@@ -78,18 +142,17 @@ export default function Home() {
       const tx = await createUnstakeDividendsTransaction(connection, publicKey);
 
       setTxStatus("Please approve the transaction in your wallet...");
-      const signature = await sendTransaction(tx, connection);
-
-      setTxStatus("Confirming transaction...");
-      await connection.confirmTransaction(signature, "confirmed");
+      await sendAndConfirm(connection, tx, sendTransaction, () =>
+        setTxStatus("Confirming transaction..."),
+      );
 
       setTxStatus("Success!");
       await Promise.all([refetchConfig(), refetchStakes()]);
       setTimeout(() => setTxStatus(null), 3000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Unstake error:", err);
-      setTxStatus(`Error: ${err.message}`);
-      setTimeout(() => setTxStatus(null), 5000);
+      setTxStatus(`Error: ${txErrorMessage(err)}`);
+      setTimeout(() => setTxStatus(null), 8000);
     }
   }, [connection, publicKey, sendTransaction, refetchConfig, refetchStakes]);
 
@@ -101,18 +164,17 @@ export default function Home() {
       const tx = await createClaimDividendsTransaction(connection, publicKey);
 
       setTxStatus("Please approve the transaction in your wallet...");
-      const signature = await sendTransaction(tx, connection);
-
-      setTxStatus("Confirming transaction...");
-      await connection.confirmTransaction(signature, "confirmed");
+      await sendAndConfirm(connection, tx, sendTransaction, () =>
+        setTxStatus("Confirming transaction..."),
+      );
 
       setTxStatus("Success!");
       await Promise.all([refetchConfig(), refetchStakes()]);
       setTimeout(() => setTxStatus(null), 3000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Claim error:", err);
-      setTxStatus(`Error: ${err.message}`);
-      setTimeout(() => setTxStatus(null), 5000);
+      setTxStatus(`Error: ${txErrorMessage(err)}`);
+      setTimeout(() => setTxStatus(null), 8000);
     }
   }, [connection, publicKey, sendTransaction, refetchConfig, refetchStakes]);
 
@@ -129,18 +191,17 @@ export default function Home() {
         );
 
         setTxStatus("Please approve the transaction in your wallet...");
-        const signature = await sendTransaction(tx, connection);
-
-        setTxStatus("Confirming transaction...");
-        await connection.confirmTransaction(signature, "confirmed");
+        await sendAndConfirm(connection, tx, sendTransaction, () =>
+          setTxStatus("Confirming transaction..."),
+        );
 
         setTxStatus("Success!");
         await refetchStakes();
         setTimeout(() => setTxStatus(null), 3000);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Partnership stake error:", err);
-        setTxStatus(`Error: ${err.message}`);
-        setTimeout(() => setTxStatus(null), 5000);
+        setTxStatus(`Error: ${txErrorMessage(err)}`);
+        setTimeout(() => setTxStatus(null), 8000);
       }
     },
     [connection, publicKey, sendTransaction, refetchStakes],
@@ -157,18 +218,17 @@ export default function Home() {
       );
 
       setTxStatus("Please approve the transaction in your wallet...");
-      const signature = await sendTransaction(tx, connection);
-
-      setTxStatus("Confirming transaction...");
-      await connection.confirmTransaction(signature, "confirmed");
+      await sendAndConfirm(connection, tx, sendTransaction, () =>
+        setTxStatus("Confirming transaction..."),
+      );
 
       setTxStatus("Success!");
       await refetchStakes();
       setTimeout(() => setTxStatus(null), 3000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Unstake partnership error:", err);
-      setTxStatus(`Error: ${err.message}`);
-      setTimeout(() => setTxStatus(null), 5000);
+      setTxStatus(`Error: ${txErrorMessage(err)}`);
+      setTimeout(() => setTxStatus(null), 8000);
     }
   }, [connection, publicKey, sendTransaction, refetchStakes]);
 
@@ -180,18 +240,17 @@ export default function Home() {
       const tx = await createClaimReferralTransaction(connection, publicKey);
 
       setTxStatus("Please approve the transaction in your wallet...");
-      const signature = await sendTransaction(tx, connection);
-
-      setTxStatus("Confirming transaction...");
-      await connection.confirmTransaction(signature, "confirmed");
+      await sendAndConfirm(connection, tx, sendTransaction, () =>
+        setTxStatus("Confirming transaction..."),
+      );
 
       setTxStatus("Success!");
       await refetchStakes();
       setTimeout(() => setTxStatus(null), 3000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Claim referral error:", err);
-      setTxStatus(`Error: ${err.message}`);
-      setTimeout(() => setTxStatus(null), 5000);
+      setTxStatus(`Error: ${txErrorMessage(err)}`);
+      setTimeout(() => setTxStatus(null), 8000);
     }
   }, [connection, publicKey, sendTransaction, refetchStakes]);
 
@@ -206,18 +265,17 @@ export default function Home() {
       );
 
       setTxStatus("Please approve the transaction in your wallet...");
-      const signature = await sendTransaction(tx, connection);
-
-      setTxStatus("Confirming transaction...");
-      await connection.confirmTransaction(signature, "confirmed");
+      await sendAndConfirm(connection, tx, sendTransaction, () =>
+        setTxStatus("Confirming transaction..."),
+      );
 
       setTxStatus("Account closed! You can now stake again.");
       await refetchStakes();
       setTimeout(() => setTxStatus(null), 3000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Close partnership error:", err);
-      setTxStatus(`Error: ${err.message}`);
-      setTimeout(() => setTxStatus(null), 5000);
+      setTxStatus(`Error: ${txErrorMessage(err)}`);
+      setTimeout(() => setTxStatus(null), 8000);
     }
   }, [connection, publicKey, sendTransaction, refetchStakes]);
 
@@ -234,18 +292,17 @@ export default function Home() {
         );
 
         setTxStatus("Please approve the transaction in your wallet...");
-        const signature = await sendTransaction(tx, connection);
-
-        setTxStatus("Confirming transaction...");
-        await connection.confirmTransaction(signature, "confirmed");
+        await sendAndConfirm(connection, tx, sendTransaction, () =>
+          setTxStatus("Confirming transaction..."),
+        );
 
         setTxStatus("Success! Awaiting admin validation.");
         await refetchStakes();
         setTimeout(() => setTxStatus(null), 3000);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Data provider stake error:", err);
-        setTxStatus(`Error: ${err.message}`);
-        setTimeout(() => setTxStatus(null), 5000);
+        setTxStatus(`Error: ${txErrorMessage(err)}`);
+        setTimeout(() => setTxStatus(null), 8000);
       }
     },
     [connection, publicKey, sendTransaction, refetchStakes],
@@ -262,18 +319,17 @@ export default function Home() {
       );
 
       setTxStatus("Please approve the transaction in your wallet...");
-      const signature = await sendTransaction(tx, connection);
-
-      setTxStatus("Confirming transaction...");
-      await connection.confirmTransaction(signature, "confirmed");
+      await sendAndConfirm(connection, tx, sendTransaction, () =>
+        setTxStatus("Confirming transaction..."),
+      );
 
       setTxStatus("Success!");
       await refetchStakes();
       setTimeout(() => setTxStatus(null), 3000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Unstake data provider error:", err);
-      setTxStatus(`Error: ${err.message}`);
-      setTimeout(() => setTxStatus(null), 5000);
+      setTxStatus(`Error: ${txErrorMessage(err)}`);
+      setTimeout(() => setTxStatus(null), 8000);
     }
   }, [connection, publicKey, sendTransaction, refetchStakes]);
 
@@ -331,6 +387,7 @@ export default function Home() {
             stake={dividendStake}
             config={config}
             onStake={handleStakeDividends}
+            onIncrease={handleIncreaseDividends}
             onUnstake={handleUnstakeDividends}
             onClaim={handleClaimDividends}
           />

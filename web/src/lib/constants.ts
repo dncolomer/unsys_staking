@@ -54,6 +54,12 @@ export const LOCK_MULTIPLIERS: Record<number, number> = {
   12: 15000, // 1.5x
 };
 
+export function lockMonthsFromMultiplier(multiplierBps: number): number {
+  if (multiplierBps >= 15000) return 12;
+  if (multiplierBps >= 12500) return 6;
+  return 3;
+}
+
 // Format helpers
 export function formatUnsys(amount: number | bigint): string {
   const num = typeof amount === "bigint" ? Number(amount) : amount;

@@ -1,14 +1,21 @@
 "use client";
 
-import { FC, useState } from "react";
+import { FC, useEffect, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { DividendStake, GlobalConfig } from "@/lib/program";
-import { formatUnsys, formatUsdc, LOCK_MULTIPLIERS } from "@/lib/constants";
+import {
+  formatUnsys,
+  formatUsdc,
+  LOCK_MULTIPLIERS,
+  UNSYS_DECIMALS,
+  lockMonthsFromMultiplier,
+} from "@/lib/constants";
 
 interface Props {
   stake: DividendStake | null;
   config: GlobalConfig | null;
   onStake: (amount: number, lockMonths: number) => Promise<void>;
+  onIncrease: (additionalAmount: number, lockMonths: number) => Promise<void>;
   onUnstake: () => Promise<void>;
   onClaim: () => Promise<void>;
 }
@@ -17,6 +24,7 @@ export const DividendStaking: FC<Props> = ({
   stake,
   config,
   onStake,
+  onIncrease,
   onUnstake,
   onClaim,
 }) => {
@@ -25,7 +33,20 @@ export const DividendStaking: FC<Props> = ({
   const [lockMonths, setLockMonths] = useState(3);
   const [loading, setLoading] = useState(false);
 
-  const hasStake = stake?.isInitialized && stake.amount > 0n;
+  const hasStake = !!(stake?.isInitialized && stake.amount > 0n);
+  const currentLockMonths = stake
+    ? lockMonthsFromMultiplier(stake.multiplierBps)
+    : 3;
+
+  useEffect(() => {
+    if (hasStake) {
+      setLockMonths(currentLockMonths);
+      setAmount("");
+    } else {
+      setLockMonths(3);
+    }
+  }, [hasStake, currentLockMonths]);
+
   const lockExpired = stake
     ? Date.now() / 1000 >= Number(stake.lockEnd)
     : false;
@@ -42,6 +63,11 @@ export const DividendStaking: FC<Props> = ({
         Number(config.totalDividendShares)
       : 0;
 
+  const extraAmount = amount.trim() === "" ? 0 : parseFloat(amount);
+  const validExtra = !isNaN(extraAmount) && extraAmount > 0;
+  const extendingLock = hasStake && lockMonths > currentLockMonths;
+  const canUpdateStake = hasStake && (validExtra || extendingLock);
+
   const handleStake = async () => {
     const parsedAmount = parseFloat(amount);
     if (isNaN(parsedAmount) || parsedAmount <= 0) return;
@@ -49,6 +75,20 @@ export const DividendStaking: FC<Props> = ({
     setLoading(true);
     try {
       await onStake(parsedAmount, lockMonths);
+      setAmount("");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleIncrease = async () => {
+    const parsedAmount = amount.trim() === "" ? 0 : parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount < 0) return;
+    if (parsedAmount <= 0 && lockMonths <= currentLockMonths) return;
+
+    setLoading(true);
+    try {
+      await onIncrease(parsedAmount, lockMonths);
       setAmount("");
     } finally {
       setLoading(false);
@@ -146,6 +186,98 @@ export const DividendStaking: FC<Props> = ({
               {loading ? "Processing..." : "Unstake All"}
             </button>
           )}
+
+          <div className="border-t border-gray-700 pt-4 space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-white">
+                Increase or extend stake
+              </h3>
+              <p className="text-xs text-gray-400 mt-1">
+                Add more UNSYS and/or switch to a longer lock. You cannot
+                shorten the lock. Extending restarts the lock from today.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">
+                Add UNSYS (optional)
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">
+                Lock Period
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[3, 6, 12].map((months) => {
+                  const disabled = months < currentLockMonths;
+                  const selected = lockMonths === months;
+                  return (
+                    <button
+                      key={months}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => setLockMonths(months)}
+                      className={`py-3 px-4 rounded-lg border transition-colors ${
+                        disabled
+                          ? "bg-gray-900 border-gray-800 text-gray-600 cursor-not-allowed"
+                          : selected
+                            ? "bg-purple-600 border-purple-500 text-white"
+                            : "bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-600"
+                      }`}
+                    >
+                      <div className="text-sm font-semibold">
+                        {months} Months
+                      </div>
+                      <div className="text-xs opacity-75">
+                        {(LOCK_MULTIPLIERS[months] / 10000).toFixed(2)}x
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {canUpdateStake && stake && (
+              <p className="text-xs text-gray-400">
+                New position:{" "}
+                {formatUnsys(
+                  stake.amount +
+                    BigInt(
+                      Math.floor(
+                        (validExtra ? extraAmount : 0) * 10 ** UNSYS_DECIMALS,
+                      ),
+                    ),
+                )}{" "}
+                UNSYS at {(LOCK_MULTIPLIERS[lockMonths] / 10000).toFixed(2)}x
+                {canClaim
+                  ? ". Unclaimed dividends will be claimed in the same transaction."
+                  : "."}
+              </p>
+            )}
+
+            <button
+              onClick={handleIncrease}
+              disabled={loading || !canUpdateStake}
+              className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white font-semibold py-3 px-4 rounded-lg transition-colors"
+            >
+              {loading
+                ? "Processing..."
+                : extendingLock && validExtra
+                  ? "Add UNSYS & extend lock"
+                  : extendingLock
+                    ? "Extend lock"
+                    : "Add UNSYS"}
+            </button>
+          </div>
         </div>
       ) : (
         <div className="space-y-4">

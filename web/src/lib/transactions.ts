@@ -6,6 +6,7 @@ import {
   SystemProgram,
 } from "@solana/web3.js";
 import {
+  createAssociatedTokenAccountIdempotentInstruction,
   getAssociatedTokenAddressSync,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -29,6 +30,7 @@ import {
 // These are the first 8 bytes of sha256("global:<instruction_name>")
 const DISCRIMINATORS = {
   stakeDividends: Buffer.from([161, 224, 5, 30, 92, 103, 47, 69]),
+  increaseDividendStake: Buffer.from([107, 174, 114, 121, 129, 165, 172, 97]),
   unstakeDividends: Buffer.from([211, 193, 244, 125, 100, 133, 32, 55]),
   claimDividends: Buffer.from([105, 60, 172, 2, 136, 93, 128, 151]),
   stakePartnership: Buffer.from([128, 9, 210, 114, 118, 244, 25, 115]),
@@ -89,6 +91,65 @@ export async function createStakeDividendsTransaction(
     { pubkey: UNSYS_VAULT, isSigner: false, isWritable: true },
     { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+
+  const ix = new TransactionInstruction({
+    keys,
+    programId: PROGRAM_ID,
+    data,
+  });
+
+  const tx = new Transaction().add(ix);
+  tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+  tx.feePayer = user;
+
+  return tx;
+}
+
+/**
+ * Create increase dividend stake transaction
+ *
+ * Adds more UNSYS and/or extends the lock on an existing stake.
+ * lockMonths is the desired period (must be >= current). Pass 0 additional
+ * amount to only extend the lock.
+ *
+ * Rust struct order:
+ * - global_config (mut)
+ * - user_stake (mut)
+ * - user (signer, mut)
+ * - unsys_mint
+ * - user_unsys_ata (mut)
+ * - token_vault (mut)
+ * - token_program
+ */
+export async function createIncreaseDividendStakeTransaction(
+  connection: Connection,
+  user: PublicKey,
+  additionalAmount: number,
+  lockMonths: number,
+): Promise<Transaction> {
+  const userStakePda = getDividendStakePda(user);
+  const userUnsysAta = getAssociatedTokenAddressSync(
+    UNSYS_MINT,
+    user,
+    false,
+    TOKEN_2022_PROGRAM_ID,
+  );
+
+  const amountRaw = BigInt(Math.floor(additionalAmount * 10 ** UNSYS_DECIMALS));
+  const data = Buffer.alloc(8 + 8 + 1);
+  DISCRIMINATORS.increaseDividendStake.copy(data, 0);
+  writeU64LE(data, amountRaw, 8);
+  data.writeUInt8(lockMonths, 16);
+
+  const keys = [
+    { pubkey: GLOBAL_CONFIG_PDA, isSigner: false, isWritable: true },
+    { pubkey: userStakePda, isSigner: false, isWritable: true },
+    { pubkey: user, isSigner: true, isWritable: true },
+    { pubkey: UNSYS_MINT, isSigner: false, isWritable: false },
+    { pubkey: userUnsysAta, isSigner: false, isWritable: true },
+    { pubkey: UNSYS_VAULT, isSigner: false, isWritable: true },
+    { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
   ];
 
   const ix = new TransactionInstruction({
@@ -189,7 +250,20 @@ export async function createClaimDividendsTransaction(
     data: DISCRIMINATORS.claimDividends,
   });
 
-  const tx = new Transaction().add(ix);
+  // The claim transfers USDC into this ATA. The program does not create it.
+  // Phantom's in-app browser refuses to approve a claim whose simulation fails
+  // because the account is missing, which is common for wallets that hold
+  // UNSYS but have never received USDC. The idempotent create is a no-op when
+  // the account already exists.
+  const createUsdcAtaIx = createAssociatedTokenAccountIdempotentInstruction(
+    user,
+    userUsdcAta,
+    user,
+    USDC_MINT,
+    TOKEN_PROGRAM_ID,
+  );
+
+  const tx = new Transaction().add(createUsdcAtaIx, ix);
   tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
   tx.feePayer = user;
 
@@ -345,7 +419,15 @@ export async function createClaimReferralTransaction(
     data: DISCRIMINATORS.claimReferralShare,
   });
 
-  const tx = new Transaction().add(ix);
+  const createUsdcAtaIx = createAssociatedTokenAccountIdempotentInstruction(
+    user,
+    userUsdcAta,
+    user,
+    USDC_MINT,
+    TOKEN_PROGRAM_ID,
+  );
+
+  const tx = new Transaction().add(createUsdcAtaIx, ix);
   tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
   tx.feePayer = user;
 

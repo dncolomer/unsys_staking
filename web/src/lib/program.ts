@@ -28,6 +28,7 @@ function readI64LE(buffer: Buffer, offset: number): bigint {
 // Instruction discriminators (from IDL)
 const DISCRIMINATORS = {
   stakeDividends: Buffer.from([233, 176, 28, 203, 245, 144, 234, 38]),
+  increaseDividendStake: Buffer.from([107, 174, 114, 121, 129, 165, 172, 97]),
   unstakeDividends: Buffer.from([211, 193, 244, 125, 100, 133, 32, 55]),
   claimDividends: Buffer.from([105, 60, 172, 2, 136, 93, 128, 151]),
   stakePartnership: Buffer.from([171, 47, 121, 219, 178, 69, 65, 227]),
